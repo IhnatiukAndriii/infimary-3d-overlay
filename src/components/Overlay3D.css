@@ -1,0 +1,230 @@
+/* Root container for canvas and overlays */
+.overlayRoot {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* Visible video background under transparent WebGL canvas */
+.videoBg {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  object-fit: cover;
+  z-index: 1;
+  background: #000;
+  -webkit-transform: translateZ(0);
+  transform: translateZ(0);
+  will-change: transform;
+}
+
+/* Transparent R3F canvas over the video */
+.r3fCanvas canvas, /* in case Canvas injects wrapper */
+.r3fCanvas {
+  position: absolute !important;
+  top: 0;
+  left: 0;
+  width: 100vw !important;
+  height: 100vh !important;
+  z-index: 2;
+  background: transparent !important;
+  pointer-events: auto;
+}
+
+/* In-canvas small control panel for selected model */
+.modelControls {
+  display: flex;
+  gap: 8px;
+  background: rgba(255, 193, 7, 0.95);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  border-radius: 12px;
+  padding: 12px 16px;
+  box-shadow: 0 8px 32px rgba(255, 193, 7, 0.3);
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  animation: fadeIn 0.3s ease-out;
+}
+
+.modelControls button {
+  background: rgba(255, 255, 255, 0.9);
+  border: none;
+  border-radius: 8px;
+  padding: 8px 16px;
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  color: #f57c00;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.modelControls button:hover {
+  background: rgba(255, 255, 255, 1);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+.modelControls button:active {
+  transform: translateY(0);
+}
+
+/* Bottom toolbar with gallery and actions - Glassmorphism style */
+.toolbar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 1000; /* above canvas */
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: center;
+  align-items: center;
+  width: 100%;
+  padding: 20px 16px;
+  background: rgba(255, 255, 255, 0.95);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  backdrop-filter: blur(20px) saturate(180%);
+  border-top: 1px solid rgba(255, 193, 7, 0.3);
+  box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.15);
+  overflow-x: auto;
+  overflow-y: hidden;
+  animation: slideUp 0.4s ease-out;
+  max-height: 200px;
+}
+
+/* Custom scrollbar for toolbar */
+.toolbar::-webkit-scrollbar {
+  height: 6px;
+}
+
+.toolbar::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 3px;
+}
+
+.toolbar::-webkit-scrollbar-thumb {
+  background: rgba(255, 193, 7, 0.5);
+  border-radius: 3px;
+}
+
+.toolbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 193, 7, 0.7);
+}
+
+/* Animations */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes slideUp {
+  from {
+    transform: translateY(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .toolbar {
+    padding: 16px 12px;
+    gap: 8px;
+  }
+  
+  .modelControls {
+    padding: 8px 12px;
+    gap: 6px;
+  }
+  
+  .modelControls button {
+    padding: 6px 12px;
+    font-size: 12px;
+  }
+}
+
+@media (max-width: 480px) {
+  .toolbar {
+    padding: 12px 8px;
+    gap: 6px;
+  }
+}
+
+/* Selection info overlay */
+.selectionInfo {
+  position: fixed;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000; /* above canvas */
+  background: rgba(255, 193, 7, 0.95);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  padding: 16px 20px;
+  border-radius: 16px;
+  box-shadow: 0 8px 24px rgba(255, 193, 7, 0.4);
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  text-align: center;
+  animation: slideDown 0.3s ease-out;
+  max-width: 90%;
+}
+
+.selectionInfo p {
+  margin: 4px 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #333;
+  line-height: 1.5;
+}
+
+@keyframes slideDown {
+  from {
+    transform: translateX(-50%) translateY(-20px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(-50%) translateY(0);
+    opacity: 1;
+  }
+}
+
+/* Floating delete button for model */
+.deleteBtn3D {
+  width: 36px;
+  height: 36px;
+  border-radius: 18px;
+  border: none;
+  background: rgba(244, 67, 54, 0.95);
+  color: #fff;
+  font-weight: 800;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+  cursor: pointer;
+}
+
+.deleteBtn3D:active {
+  transform: scale(0.96);
+}
+
+@media (max-width: 480px) {
+  .selectionInfo {
+    padding: 12px 16px;
+    font-size: 13px;
+  }
+  
+  .selectionInfo p {
+    font-size: 12px;
+  }
+}

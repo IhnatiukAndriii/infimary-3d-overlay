@@ -1,0 +1,103 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="icon" href="%PUBLIC_URL%/favicon.ico" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#000000" />
+    <meta
+      name="description"
+      content="Web site created using create-react-app"
+    />
+    <link rel="apple-touch-icon" href="%PUBLIC_URL%/logo192.png" />
+    <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
+    <title>React App</title>
+    <script>
+      // МАКСИМАЛЬНЕ ПРИДУШЕННЯ ПОМИЛОК РОЗШИРЕНЬ (надраннє)
+      (function() {
+        var originalError = console.error;
+        var originalWarn = console.warn;
+        console.error = function() {
+          var args = Array.prototype.slice.call(arguments);
+          var message = args.join(' ').toLowerCase();
+          if (message.indexOf('runtime.lasterror') !== -1 ||
+              message.indexOf('unchecked runtime') !== -1 ||
+              message.indexOf('message channel closed') !== -1 ||
+              message.indexOf('listener indicated') !== -1 ||
+              message.indexOf('extension context') !== -1) {
+            return;
+          }
+          originalError.apply(console, args);
+        };
+        console.warn = function() {
+          var args = Array.prototype.slice.call(arguments);
+          var message = args.join(' ').toLowerCase();
+          if (message.indexOf('runtime') !== -1 ||
+              message.indexOf('extension') !== -1 ||
+              message.indexOf('message channel') !== -1) {
+            return;
+          }
+          originalWarn.apply(console, args);
+        };
+
+        // Intercept dispatchEvent to swallow unwanted error/unhandledrejection events
+        var originalDispatch = EventTarget.prototype.dispatchEvent;
+        EventTarget.prototype.dispatchEvent = function(evt){
+          try {
+            if (evt && (evt.type === 'unhandledrejection' || evt.type === 'error')) {
+              var msg = '';
+              if (evt.type === 'unhandledrejection') {
+                var r = evt.reason; msg = String((r && (r.message||r)) || '').toLowerCase();
+              } else if (evt.type === 'error') {
+                msg = String(evt.message||'').toLowerCase();
+              }
+              if (msg && (msg.indexOf('runtime.lasterror') !== -1 || msg.indexOf('message channel') !== -1 || msg.indexOf('listener indicated') !== -1 || msg.indexOf('extension') !== -1)) {
+                if (evt.preventDefault) evt.preventDefault();
+                if (evt.stopPropagation) evt.stopPropagation();
+                if (evt.stopImmediatePropagation) evt.stopImmediatePropagation();
+                return true;
+              }
+            }
+          } catch(_) {}
+          return originalDispatch.call(this, evt);
+        };
+
+        window.addEventListener('error', function(event) {
+          var message = (event.message || '').toLowerCase();
+          if (message.indexOf('runtime.lasterror') !== -1 ||
+              message.indexOf('message channel closed') !== -1 ||
+              message.indexOf('extension context') !== -1 ||
+              message.indexOf('listener indicated') !== -1) {
+            event.preventDefault();
+            event.stopPropagation();
+            event.stopImmediatePropagation();
+            return false;
+          }
+        }, true);
+
+        window.addEventListener('unhandledrejection', function(event) {
+          var message = '';
+          if (event.reason) {
+            message = (event.reason.message || String(event.reason)).toLowerCase();
+          }
+          if (message.indexOf('runtime.lasterror') !== -1 ||
+              message.indexOf('message channel closed') !== -1 ||
+              message.indexOf('extension context') !== -1 ||
+              message.indexOf('listener indicated') !== -1 ||
+              message.indexOf('message port closed') !== -1) {
+            event.preventDefault();
+            event.stopPropagation();
+            event.stopImmediatePropagation();
+            return false;
+          }
+        }, true);
+
+        console.log('%c✓ Error suppression active', 'color: green; font-weight: bold');
+      })();
+    </script>
+  </head>
+  <body>
+    <noscript>You need to enable JavaScript to run this app.</noscript>
+    <div id="root"></div>
+  </body>
+</html>
