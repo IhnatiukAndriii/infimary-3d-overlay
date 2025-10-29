@@ -63,6 +63,7 @@ function Model({ url, position, rotation, scale, selected, onUpdate, onSelect, o
     initialRotY: number;
     lastDistance: number;
     lastAngle: number;
+    prevDistance?: number;
     targetScale: number;
     targetRotY: number;
   } | null>(null);
@@ -289,8 +290,32 @@ function Model({ url, position, rotation, scale, selected, onUpdate, onSelect, o
         const arr = Array.from(pointersRef.current.values());
         const dx = arr[1].x - arr[0].x;
         const dy = arr[1].y - arr[0].y;
-        pinchRef.current.lastDistance = Math.hypot(dx, dy);
-        pinchRef.current.lastAngle = Math.atan2(dy, dx);
+        const newDist = Math.hypot(dx, dy);
+        const newAngle = Math.atan2(dy, dx);
+        // Оновлюємо останні виміри
+        const prev = pinchRef.current.prevDistance ?? newDist;
+        pinchRef.current.prevDistance = pinchRef.current.lastDistance ?? newDist;
+        pinchRef.current.lastDistance = newDist;
+        pinchRef.current.lastAngle = newAngle;
+        // Негайне застосування: обчислюємо і ставимо трансформації одразу, без очікування кадру
+        if (ref.current) {
+          const SENS = 8.4;
+          const dead = 0.00025;
+          const minS = 0.1;
+          const maxS = 3;
+          const pr = pinchRef.current;
+          // Посилена екстраполяція (1.5 кроку наперед) для максимально "живого" відгуку
+          const dv = pr.lastDistance - (prev ?? pr.lastDistance);
+          const predicted = pr.lastDistance + dv * 1.5;
+          const rawFactor = predicted / pr.initialDistance;
+          const factor = Math.abs(rawFactor - 1) < dead ? 1 : Math.pow(rawFactor, SENS);
+          const desiredScale = THREE.MathUtils.clamp(pr.initialScale * factor, minS, maxS);
+          const desiredRotY = pr.initialRotY + (pr.lastAngle - pr.initialAngle) * 2.2;
+          pr.targetScale = desiredScale;
+          pr.targetRotY = desiredRotY;
+          ref.current.scale.setScalar(desiredScale);
+          ref.current.rotation.y = desiredRotY;
+        }
         try { invalidate(); } catch {}
       }
       return;
@@ -356,23 +381,31 @@ function Model({ url, position, rotation, scale, selected, onUpdate, onSelect, o
       }
     }
 
-    // Pinch оновлення — максимально миттєве застосування без зайвого згладжування
+    // Pinch оновлення — максимально "живе": застосовуємо цільові значення одразу кожен кадр
     if (isPinching && pinchRef.current && ref.current) {
-      const SENS = 3.0;
-      const dead = 0.001;
-      const minS = 0.1;
-      const maxS = 3;
       const pr = pinchRef.current;
-      const rawFactor = pr.lastDistance / pr.initialDistance;
-      const factor = Math.abs(rawFactor - 1) < dead ? 1 : Math.pow(rawFactor, SENS);
-      const desiredScale = THREE.MathUtils.clamp(pr.initialScale * factor, minS, maxS);
-      pr.targetScale = desiredScale;
-      const desiredRotY = pr.initialRotY + (pr.lastAngle - pr.initialAngle) * 0.8;
-      pr.targetRotY = desiredRotY;
-
-      // Застосовуємо одразу — пріоритет чутливості без відчутної затримки
-      ref.current.scale.setScalar(pr.targetScale);
-      ref.current.rotation.y = pr.targetRotY;
+      // Якщо з pointermove вже пораховані targetScale/targetRotY — просто застосовуємо
+      if (Number.isFinite(pr.targetScale) && Number.isFinite(pr.targetRotY)) {
+        ref.current.scale.setScalar(pr.targetScale);
+        ref.current.rotation.y = pr.targetRotY;
+      } else {
+        // fallback: швидкий прямий перерахунок без згладжування
+        const SENS = 8.4;
+        const dead = 0.00025;
+        const minS = 0.1;
+        const maxS = 3;
+        const prev = pr.prevDistance ?? pr.lastDistance;
+        const dv = pr.lastDistance - prev;
+        const predicted = pr.lastDistance + dv * 1.5;
+        const rawFactor = predicted / pr.initialDistance;
+        const factor = Math.abs(rawFactor - 1) < dead ? 1 : Math.pow(rawFactor, SENS);
+        const desiredScale = THREE.MathUtils.clamp(pr.initialScale * factor, minS, maxS);
+        const desiredRotY = pr.initialRotY + (pr.lastAngle - pr.initialAngle) * 2.2;
+        pr.targetScale = desiredScale;
+        pr.targetRotY = desiredRotY;
+        ref.current.scale.setScalar(desiredScale);
+        ref.current.rotation.y = desiredRotY;
+      }
 
       invalidate();
     }
@@ -417,7 +450,7 @@ function Model({ url, position, rotation, scale, selected, onUpdate, onSelect, o
     const handleWheel = (e: WheelEvent) => {
       e.preventDefault();
       // Ще вища чутливість коліщатка (було 0.0025)
-      const delta = e.deltaY * -0.004;
+  const delta = e.deltaY * -0.008;
       const newScale = Math.max(0.1, Math.min(3, scale[0] + delta));
       onUpdate({
         scale: [newScale, newScale, newScale]
@@ -483,73 +516,33 @@ function Model({ url, position, rotation, scale, selected, onUpdate, onSelect, o
     };
   }, [isDragging, position, onUpdate, gl]);
 
-  // Touch gestures via DOM for pinch/rotate — тепер оновлення у useFrame для кращої плавності
+  // Видалено дублювання pinch на Touch Events — тепер тільки Pointer Events
+
+  // Додаткові глобальні Pointer Events під час pinch для високої частоти оновлень
   useEffect(() => {
-    if (!selected) return;
-
+    if (!isPinching) return;
     const canvas = gl.domElement;
-
-    const handleTouchStart = (e: TouchEvent) => {
-      if (e.touches.length === 2 && ref.current) {
-        const t1 = e.touches[0];
-        const t2 = e.touches[1];
-        const distance = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
-        const angle = Math.atan2(t2.clientY - t1.clientY, t2.clientX - t1.clientX);
-
-        setIsDragging(false); // Вимикаємо drag при двопальцевому жесті
-        setIsPinching(true);
-        pinchRef.current = {
-          initialDistance: Math.max(distance, 1e-6),
-          initialAngle: angle,
-          initialScale: ref.current.scale.x,
-          initialRotY: ref.current.rotation.y,
-          lastDistance: distance,
-          lastAngle: angle,
-          targetScale: ref.current.scale.x,
-          targetRotY: ref.current.rotation.y,
-        };
-        // Запускаємо рендер одразу (frameloop=demand)
-        try { invalidate(); } catch {}
-      }
-    };
-
-    const handleTouchMove = (e: TouchEvent) => {
-      if (!pinchRef.current || e.touches.length !== 2) return;
-      const t1 = e.touches[0];
-      const t2 = e.touches[1];
-      pinchRef.current.lastDistance = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
-      pinchRef.current.lastAngle = Math.atan2(t2.clientY - t1.clientY, t2.clientX - t1.clientX);
-      // Нічого не оновлюємо тут — лише фіксуємо виміри. Рендер іде в useFrame().
-      // Але інвалідимо, щоби кадр почався негайно в demand-режимі
-      try { invalidate(); } catch {}
-    };
-
-    const commitPinchAndReset = () => {
-      if (ref.current) {
-        const s = ref.current.scale.x;
-        const ry = ref.current.rotation.y;
-        onUpdate({ scale: [s, s, s], rotation: [rotation[0], ry, rotation[2]] });
-      }
-      setIsPinching(false);
-      pinchRef.current = null;
-    };
-
-    const handleTouchEnd = (e: TouchEvent) => {
-      if (e.touches.length < 2 && isPinching) {
-        commitPinchAndReset();
-      }
-    };
-
-    canvas.addEventListener('touchstart', handleTouchStart, { passive: true });
-    canvas.addEventListener('touchmove', handleTouchMove, { passive: true });
-    canvas.addEventListener('touchend', handleTouchEnd, { passive: true });
-
+    const onMove = (e: PointerEvent) => handlePointerMove(e as any);
+    const onUp = (e: PointerEvent) => handlePointerUp(e as any);
+    const onCancel = (e: PointerEvent) => handlePointerUp(e as any);
+    const onRaw = (e: Event) => handlePointerMove(e as any);
+    canvas.addEventListener('pointermove', onMove, { passive: true });
+    canvas.addEventListener('pointerup', onUp, { passive: true });
+    canvas.addEventListener('pointercancel', onCancel, { passive: true });
+    (canvas as any).addEventListener?.('pointerrawupdate', onRaw, { passive: true });
+    document.addEventListener('pointermove', onMove, { passive: true });
+    document.addEventListener('pointerup', onUp, { passive: true });
+    document.addEventListener('pointercancel', onCancel, { passive: true });
     return () => {
-      canvas.removeEventListener('touchstart', handleTouchStart);
-      canvas.removeEventListener('touchmove', handleTouchMove);
-      canvas.removeEventListener('touchend', handleTouchEnd);
+      canvas.removeEventListener('pointermove', onMove as any);
+      canvas.removeEventListener('pointerup', onUp as any);
+      canvas.removeEventListener('pointercancel', onCancel as any);
+      (canvas as any).removeEventListener?.('pointerrawupdate', onRaw as any);
+      document.removeEventListener('pointermove', onMove as any);
+      document.removeEventListener('pointerup', onUp as any);
+      document.removeEventListener('pointercancel', onCancel as any);
     };
-  }, [selected, rotation, onUpdate, gl]);
+  }, [isPinching, gl, handlePointerMove, handlePointerUp]);
 
   // Обчислення позиції та розміру 3D кнопки видалення (заміна Html-оверлею)
   const deleteBtnPosition: [number, number, number] = [
