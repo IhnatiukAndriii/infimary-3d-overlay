@@ -26,10 +26,31 @@ type ModelProps = {
   mode: "mobile" | "desktop";
   onRemove: () => void;
   controlsEnabled?: boolean;
+  layoutEpoch?: number;
 };
 
-function Model({ url, position, rotation, scale, selected, onUpdate, onSelect, onRemove, controlsEnabled }: ModelProps) {
+function Model({ url, position, rotation, scale, selected, onUpdate, onSelect, onRemove, controlsEnabled, layoutEpoch }: ModelProps) {
   const { scene } = (useGLTF(url) as unknown) as { scene: THREE.Object3D };
+  // Створюємо глибоку копію GLTF-сцени один раз на екземпляр моделі,
+  // щоб уникнути неочікуваного спільного стану/диспозу між клонованими об'єктами
+  const clonedScene = React.useMemo(() => {
+    try {
+      const c = scene.clone(true);
+      // Забезпечимо стабільну взаємодію: вимикаємо frustumCulled і гарантуємо оновлення матриць
+      c.traverse((obj: any) => {
+        if (obj && typeof obj === 'object') {
+          if ('frustumCulled' in obj) obj.frustumCulled = false;
+          if ('matrixAutoUpdate' in obj) obj.matrixAutoUpdate = true;
+          // Деякі GLTF мають MeshBasicMaterial з transparent: переконаємось, що вони raycastable
+          if (obj.isMesh && !obj.raycast) obj.raycast = THREE.Mesh.prototype.raycast;
+        }
+      });
+      return c;
+    } catch {
+      return scene;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scene]);
   const ref = useRef<THREE.Group>(null!);
   const { camera, gl, invalidate } = useThree();
   const [isDragging, setIsDragging] = useState(false);
@@ -425,6 +446,54 @@ function Model({ url, position, rotation, scale, selected, onUpdate, onSelect, o
     } catch {}
   }, [isDragging, isPinching, gl]);
 
+  // Глобальний страховий ресет на випадок загубленого pointerup/touchend
+  useEffect(() => {
+    const onAnyUp = () => {
+      if (isDragging) {
+        handlePointerUp();
+      } else if (isPinching) {
+        // Коміт pinch і скидання
+        if (ref.current) {
+          const s = ref.current.scale.x;
+          const ry = ref.current.rotation.y;
+          onUpdate({ scale: [s, s, s], rotation: [rotation[0], ry, rotation[2]] });
+        }
+        setIsPinching(false);
+        pinchRef.current = null;
+        pointersRef.current.clear();
+      }
+    };
+    document.addEventListener('pointerup', onAnyUp, { passive: true });
+    document.addEventListener('pointercancel', onAnyUp, { passive: true });
+    document.addEventListener('touchend', onAnyUp, { passive: true });
+    document.addEventListener('touchcancel', onAnyUp, { passive: true });
+    return () => {
+      document.removeEventListener('pointerup', onAnyUp as any);
+      document.removeEventListener('pointercancel', onAnyUp as any);
+      document.removeEventListener('touchend', onAnyUp as any);
+      document.removeEventListener('touchcancel', onAnyUp as any);
+    };
+  }, [isDragging, isPinching, onUpdate, rotation]);
+
+  // Ресет жести при зміні складу layout (додавання/видалення)
+  useEffect(() => {
+    if (layoutEpoch == null) return;
+    // Безпечне завершення активних жестів і очищення вказівників
+    if (isDragging) {
+      handlePointerUp();
+    }
+    if (isPinching) {
+      if (ref.current) {
+        const s = ref.current.scale.x;
+        const ry = ref.current.rotation.y;
+        onUpdate({ scale: [s, s, s], rotation: [rotation[0], ry, rotation[2]] });
+      }
+      setIsPinching(false);
+      pinchRef.current = null;
+    }
+    pointersRef.current.clear();
+  }, [layoutEpoch]);
+
   // Якщо вмикаються OrbitControls, коректно завершуємо drag, щоб не було "стрибків" або зникнення
   useEffect(() => {
     if (!controlsEnabled) return;
@@ -610,9 +679,10 @@ function Model({ url, position, rotation, scale, selected, onUpdate, onSelect, o
         </Billboard>
       )}
       {/* 3D текстова підказка тимчасово вимкнена */}
-      {/* Clone створює незалежний інстанс моделі для кожного використання одного і того ж URL */}
-      <Clone 
-        object={scene}
+      {/* Використовуємо власну глибоку копію GLTF замість Clone і вимикаємо авто-диспоз */}
+      <primitive
+        object={clonedScene}
+        dispose={null}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
@@ -647,6 +717,7 @@ const Overlay3D: React.FC<Overlay3DProps> = ({ mode }) => {
   const [videoStream, setVideoStream] = useState<MediaStream | null>(null);
   const [video, setVideo] = useState<HTMLVideoElement | null>(null);
   const [layout, setLayout] = useState<any[]>([]);
+  const [layoutEpoch, setLayoutEpoch] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [cameraControlEnabled, setCameraControlEnabled] = useState(false);
   // isolation mode видалено
@@ -722,16 +793,27 @@ const Overlay3D: React.FC<Overlay3DProps> = ({ mode }) => {
       rotation: [0, 0, 0] as [number, number, number],
       scale: [1, 1, 1] as [number, number, number],
     };
-    setLayout([...layout, item]);
+    setLayout((prev) => {
+      const next = [...prev, item];
+      return next;
+    });
+    setLayoutEpoch((e) => e + 1);
     setSelectedId(id);
   };
 
   const handleUpdateModel = (id: string, data: any) => {
-    setLayout(layout.map((obj) => (obj.id === id ? { ...obj, ...data } : obj)));
+    setLayout((prev) => {
+      const next = prev.map((obj) => (obj.id === id ? { ...obj, ...data } : obj));
+      return next;
+    });
   };
 
   const handleRemoveModel = (id: string) => {
-    setLayout(layout.filter((obj) => obj.id !== id));
+    setLayout((prev) => {
+      const next = prev.filter((obj) => obj.id !== id);
+      return next;
+    });
+    setLayoutEpoch((e) => e + 1);
     if (selectedId === id) setSelectedId(null);
   };
 
@@ -749,6 +831,7 @@ const Overlay3D: React.FC<Overlay3DProps> = ({ mode }) => {
           ? parsed.map((o) => (o && o.id ? o : { ...o, id: (globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`) }))
           : [];
         setLayout(withIds);
+        setLayoutEpoch((e) => e + 1);
         // Скидаємо вибір, щоб уникати неконсистентності
         setSelectedId(null);
       } catch {
@@ -851,6 +934,9 @@ const Overlay3D: React.FC<Overlay3DProps> = ({ mode }) => {
         }}
       >
   {/* Drei Performance not available in current version; skipping dynamic tuning */}
+        {/* Примусовий кадр та оновлення матриць при зміні складу layout */}
+        {/** Викликає invalidate і оновлює matrixWorld, щоб raycast одразу працював після add/remove */}
+        <EpochInvalidator epoch={layoutEpoch} />
         <ambientLight intensity={0.7} />
         <directionalLight position={[10, 10, 10]} />
         <OrbitControls enabled={cameraControlEnabled} enablePan enableZoom />
@@ -858,11 +944,12 @@ const Overlay3D: React.FC<Overlay3DProps> = ({ mode }) => {
           <PreloadModels urls={layout.map(m => m.url)} />
           {layout.map((m) => (
             <MemoModel
-              key={m.id}
+              key={`${m.id}-${layoutEpoch}`}
               {...m}
               mode={mode}
               controlsEnabled={cameraControlEnabled}
               selected={selectedId === m.id}
+              layoutEpoch={layoutEpoch}
               onUpdate={(data: any) => handleUpdateModel(m.id, data)}
               onSelect={() => setSelectedId(m.id)}
               onRemove={() => handleRemoveModel(m.id)}
@@ -901,3 +988,20 @@ const Overlay3D: React.FC<Overlay3DProps> = ({ mode }) => {
 };
 
 export default Overlay3D;
+
+// Допоміжний компонент усередині Canvas: форсує кадр після змін списку моделей
+const EpochInvalidator: React.FC<{ epoch: number }> = ({ epoch }) => {
+  const { scene, invalidate } = useThree();
+  useEffect(() => {
+    try {
+      scene.updateMatrixWorld(true);
+    } catch {}
+    try { invalidate(); } catch {}
+    const t = setTimeout(() => {
+      try { scene.updateMatrixWorld(true); } catch {}
+      try { invalidate(); } catch {}
+    }, 0);
+    return () => clearTimeout(t);
+  }, [epoch]);
+  return null;
+};
