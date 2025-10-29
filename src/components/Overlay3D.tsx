@@ -83,6 +83,14 @@ function Model({ url, position, rotation, scale, selected, onUpdate, onSelect, o
   // Цілі та поточні значення обертання для плавного згладжування у CAMERA ON
   const rotateTargetRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const rotateCurrentRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  // Контроль натиску на кнопку видалення
+  const deleteEnableAtRef = useRef<number>(0);
+  const deletePressRef = useRef<{
+    downX: number;
+    downY: number;
+    time: number;
+    wasInside: boolean;
+  } | null>(null);
   // Активні pointers для pinch (Pointer Events)
   const pointersRef = useRef<Map<number, { x: number; y: number }>>(new Map());
   // Pinch gesture state
@@ -164,6 +172,15 @@ function Model({ url, position, rotation, scale, selected, onUpdate, onSelect, o
     }
   }, [rotation, isPinching, isRotating]);
 
+  // Вмикаємо можливість видалення через невеликий час після того, як модель стала обраною
+  useEffect(() => {
+    if (selected) {
+      deleteEnableAtRef.current = Date.now() + 600; // 600ms grace period після вибору/створення
+    } else {
+      deleteEnableAtRef.current = 0;
+    }
+  }, [selected]);
+
   // Синхронізуємо scale імперативно (щоб не перетирати під час pinch)
   useEffect(() => {
     if (pivotRef.current && !isPinching) {
@@ -197,16 +214,12 @@ function Model({ url, position, rotation, scale, selected, onUpdate, onSelect, o
       e.stopPropagation();
       return;
     }
-    // Якщо клік в зоні хрестика — видалити, навіть якщо подію перехопила hit-зона
-    if (selected && ref.current) {
+    // Якщо клік у зоні хрестика — готуємо видалення (підтвердження на pointerup)
+    if (selected && ref.current && Date.now() >= deleteEnableAtRef.current) {
       try {
-        // 1) Екранний хіт-тест у пікселях — найбільш надійний
+        // 1) Екранний хіт-тест у пікселях з точним радіусом по проекції
         if (e && typeof e.clientX === 'number' && typeof e.clientY === 'number') {
-          const delLocal = new THREE.Vector3(
-            deleteBtnPosition[0],
-            deleteBtnPosition[1],
-            deleteBtnPosition[2]
-          );
+          const delLocal = new THREE.Vector3(deleteBtnPosition[0], deleteBtnPosition[1], deleteBtnPosition[2]);
           const delWorld = ref.current.localToWorld(delLocal.clone());
           const ndc = delWorld.clone().project(camera);
           const rect = gl.domElement.getBoundingClientRect();
@@ -215,37 +228,22 @@ function Model({ url, position, rotation, scale, selected, onUpdate, onSelect, o
           const dx = e.clientX - px;
           const dy = e.clientY - py;
           const distPx = Math.hypot(dx, dy);
-          const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
-          const thresholdPx = 12 * dpr; // зменшено з ~24px до ~12px
+          // проєктуємо радіус кола у пікселі за допомогою напрямку "праворуч" від камери
+          const camRight = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion).normalize();
+          const scaleFactor = pivotRef.current ? pivotRef.current.scale.x : Math.max(scale[0], scale[1], scale[2]);
+          const worldRadius = deleteBtnRadius * scaleFactor;
+          const edgeWorld = delWorld.clone().add(camRight.multiplyScalar(worldRadius));
+          const edgeNdc = edgeWorld.clone().project(camera);
+          const edgePx = ((edgeNdc.x + 1) / 2) * rect.width + rect.left;
+          const edgePy = ((-edgeNdc.y + 1) / 2) * rect.height + rect.top;
+          const pxRadius = Math.hypot(edgePx - px, edgePy - py);
+          const thresholdPx = pxRadius * 0.85; // трохи менше за видимий радіус
           if (distPx <= thresholdPx) {
+            // Маркуємо як потенційне видалення, підтвердимо на pointerup
+            deletePressRef.current = { downX: e.clientX, downY: e.clientY, time: Date.now(), wasInside: true };
             e.stopPropagation();
-            onRemove();
+            // поки не видаляємо тут — чекаємо pointerup
             return;
-          }
-        }
-
-        // 2) Запасний варіант: перетин променя з площиною перед хрестиком
-        if (e && e.ray) {
-          const delLocal = new THREE.Vector3(
-            deleteBtnPosition[0],
-            deleteBtnPosition[1],
-            deleteBtnPosition[2]
-          );
-          const delWorld = ref.current.localToWorld(delLocal.clone());
-
-          // Перетин променя з площиною, перпендикулярною камері і що проходить через хрестик
-          const normal = new THREE.Vector3();
-          camera.getWorldDirection(normal);
-          const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(normal, delWorld);
-          const planeHit = new THREE.Vector3();
-          if (e.ray.intersectPlane(plane, planeHit)) {
-            const scaleFactor = Math.max(scale[0], scale[1], scale[2]);
-            const threshold = deleteBtnRadius * scaleFactor * 0.9; // зменшений хітбокс відносно візуального радіуса
-            if (planeHit.distanceTo(delWorld) <= threshold) {
-              e.stopPropagation();
-              onRemove();
-              return;
-            }
           }
         }
       } catch {}
@@ -413,6 +411,40 @@ function Model({ url, position, rotation, scale, selected, onUpdate, onSelect, o
   };
 
   const handlePointerUp = (e?: any) => {
+    // Підтвердження можливого видалення по кліку (без значного руху і швидко)
+    if (deletePressRef.current && e && typeof e.clientX === 'number' && typeof e.clientY === 'number') {
+      const press = deletePressRef.current;
+      deletePressRef.current = null;
+      const moved = Math.hypot(e.clientX - press.downX, e.clientY - press.downY);
+      const quick = Date.now() - press.time < 500;
+      if (press.wasInside && moved <= 10 && quick && selected && ref.current && Date.now() >= deleteEnableAtRef.current) {
+        // Повторно звіримо, що ми досі всередині екраної кнопки (на випадок масштабів/рухів)
+        try {
+          const delLocal = new THREE.Vector3(deleteBtnPosition[0], deleteBtnPosition[1], deleteBtnPosition[2]);
+          const delWorld = ref.current.localToWorld(delLocal.clone());
+          const rect = gl.domElement.getBoundingClientRect();
+          const ndc = delWorld.clone().project(camera);
+          const px = ((ndc.x + 1) / 2) * rect.width + rect.left;
+          const py = ((-ndc.y + 1) / 2) * rect.height + rect.top;
+          const dx = e.clientX - px;
+          const dy = e.clientY - py;
+          const distPx = Math.hypot(dx, dy);
+          const camRight = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion).normalize();
+          const scaleFactor = pivotRef.current ? pivotRef.current.scale.x : Math.max(scale[0], scale[1], scale[2]);
+          const worldRadius = deleteBtnRadius * scaleFactor;
+          const edgeWorld = delWorld.clone().add(camRight.multiplyScalar(worldRadius));
+          const edgeNdc = edgeWorld.clone().project(camera);
+          const edgePx = ((edgeNdc.x + 1) / 2) * rect.width + rect.left;
+          const edgePy = ((-edgeNdc.y + 1) / 2) * rect.height + rect.top;
+          const pxRadius = Math.hypot(edgePx - px, edgePy - py);
+          const thresholdPx = pxRadius * 0.85;
+          if (distPx <= thresholdPx) {
+            onRemove();
+            return;
+          }
+        } catch {}
+      }
+    }
     // Завершення обертання
     if (isRotating) {
       if (pivotRef.current) {
