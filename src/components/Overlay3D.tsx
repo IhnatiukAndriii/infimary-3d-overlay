@@ -647,7 +647,7 @@ const Overlay3D: React.FC<Overlay3DProps> = ({ mode }) => {
   const [videoStream, setVideoStream] = useState<MediaStream | null>(null);
   const [video, setVideo] = useState<HTMLVideoElement | null>(null);
   const [layout, setLayout] = useState<any[]>([]);
-  const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [cameraControlEnabled, setCameraControlEnabled] = useState(false);
   // isolation mode видалено
 
@@ -714,25 +714,25 @@ const Overlay3D: React.FC<Overlay3DProps> = ({ mode }) => {
   }, [mode]);
 
   const handleAddModel = (url: string) => {
-    setLayout([
-      ...layout,
-      {
-        url,
-        position: [Math.random() - 0.5, 0, Math.random() - 0.5],
-        rotation: [0, 0, 0],
-        scale: [1, 1, 1]
-      }
-    ]);
-    setSelectedIdx(layout.length);
+    const id = (globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`);
+    const item = {
+      id,
+      url,
+      position: [Math.random() - 0.5, 0, Math.random() - 0.5] as [number, number, number],
+      rotation: [0, 0, 0] as [number, number, number],
+      scale: [1, 1, 1] as [number, number, number],
+    };
+    setLayout([...layout, item]);
+    setSelectedId(id);
   };
 
-  const handleUpdateModel = (idx: number, data: any) => {
-    setLayout(layout.map((obj, i) => (i === idx ? { ...obj, ...data } : obj)));
+  const handleUpdateModel = (id: string, data: any) => {
+    setLayout(layout.map((obj) => (obj.id === id ? { ...obj, ...data } : obj)));
   };
 
-  const handleRemoveModel = (idx: number) => {
-    setLayout(layout.filter((_, i) => i !== idx));
-    if (selectedIdx === idx) setSelectedIdx(null);
+  const handleRemoveModel = (id: string) => {
+    setLayout(layout.filter((obj) => obj.id !== id));
+    if (selectedId === id) setSelectedId(null);
   };
 
   const handleSaveLayout = () => {
@@ -741,7 +741,20 @@ const Overlay3D: React.FC<Overlay3DProps> = ({ mode }) => {
   };
   const handleLoadLayout = () => {
     const raw = localStorage.getItem("room-layout");
-    if (raw) setLayout(JSON.parse(raw));
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw);
+        // Додаємо id для старих збережень без нього
+        const withIds = Array.isArray(parsed)
+          ? parsed.map((o) => (o && o.id ? o : { ...o, id: (globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`) }))
+          : [];
+        setLayout(withIds);
+        // Скидаємо вибір, щоб уникати неконсистентності
+        setSelectedId(null);
+      } catch {
+        setLayout([]);
+      }
+    }
   };
 
   const handleScreenshot = () => {
@@ -843,16 +856,16 @@ const Overlay3D: React.FC<Overlay3DProps> = ({ mode }) => {
         <OrbitControls enabled={cameraControlEnabled} enablePan enableZoom />
         <Suspense fallback={null}>
           <PreloadModels urls={layout.map(m => m.url)} />
-          {layout.map((m, idx) => (
+          {layout.map((m) => (
             <MemoModel
-              key={idx}
+              key={m.id}
               {...m}
               mode={mode}
               controlsEnabled={cameraControlEnabled}
-              selected={selectedIdx === idx}
-              onUpdate={(data: any) => handleUpdateModel(idx, data)}
-              onSelect={() => setSelectedIdx(idx)}
-              onRemove={() => handleRemoveModel(idx)}
+              selected={selectedId === m.id}
+              onUpdate={(data: any) => handleUpdateModel(m.id, data)}
+              onSelect={() => setSelectedId(m.id)}
+              onRemove={() => handleRemoveModel(m.id)}
             />
           ))}
           <Preload all />
