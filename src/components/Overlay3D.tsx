@@ -27,9 +27,11 @@ type ModelProps = {
   onRemove: () => void;
   controlsEnabled?: boolean;
   layoutEpoch?: number;
+  onPinchActiveChange?: (active: boolean) => void;
+  onFocusCenter?: (worldCenter: [number, number, number]) => void;
 };
 
-function Model({ url, position, rotation, scale, selected, onUpdate, onSelect, onRemove, controlsEnabled, layoutEpoch }: ModelProps) {
+function Model({ url, position, rotation, scale, selected, onUpdate, onSelect, onRemove, controlsEnabled, layoutEpoch, onPinchActiveChange, onFocusCenter }: ModelProps) {
   const { scene } = (useGLTF(url) as unknown) as { scene: THREE.Object3D };
   // Створюємо глибоку копію GLTF-сцени один раз на екземпляр моделі,
   // щоб уникнути неочікуваного спільного стану/диспозу між клонованими об'єктами
@@ -52,9 +54,12 @@ function Model({ url, position, rotation, scale, selected, onUpdate, onSelect, o
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scene]);
   const ref = useRef<THREE.Group>(null!);
+  const pivotRef = useRef<THREE.Group>(null!); // центр обертання моделі (bbox-центр)
+  const contentRef = useRef<THREE.Group>(null!); // вміст моделі, зсунений на -bboxCenter
   const { camera, gl, invalidate } = useThree();
   const [isDragging, setIsDragging] = useState(false);
   const [isPinching, setIsPinching] = useState(false);
+  const [isRotating, setIsRotating] = useState(false);
   const dragStartRef = useRef<{
     x: number;
     y: number;
@@ -74,6 +79,10 @@ function Model({ url, position, rotation, scale, selected, onUpdate, onSelect, o
   const bboxSizeRef = useRef<THREE.Vector3>(new THREE.Vector3());
   const hitMeshRef = useRef<THREE.Mesh | null>(null);
   const baseRadiusRef = useRef<number>(0.6);
+  const rotateStartYRef = useRef<number>(0);
+  // Цілі та поточні значення обертання для плавного згладжування у CAMERA ON
+  const rotateTargetRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const rotateCurrentRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   // Активні pointers для pinch (Pointer Events)
   const pointersRef = useRef<Map<number, { x: number; y: number }>>(new Map());
   // Pinch gesture state
@@ -85,6 +94,7 @@ function Model({ url, position, rotation, scale, selected, onUpdate, onSelect, o
     lastDistance: number;
     lastAngle: number;
     prevDistance?: number;
+    prevAngle?: number;
     targetScale: number;
     targetRotY: number;
   } | null>(null);
@@ -100,10 +110,19 @@ function Model({ url, position, rotation, scale, selected, onUpdate, onSelect, o
       // Зберігаємо центр і розмір bbox для коректного розміщення кнопки
       bboxCenterRef.current.copy(center);
       bboxSizeRef.current.copy(size);
+      // Нормалізуємо pivot: зсуваємо вміст на -center, а pivot групу ставимо в +center
+      if (contentRef.current) {
+        contentRef.current.position.set(-center.x, -center.y, -center.z);
+      }
+      if (pivotRef.current) {
+        pivotRef.current.position.set(center.x, center.y, center.z);
+        // Для стабільного pitch/yaw обертання використаємо порядок YXZ
+        try { pivotRef.current.rotation.order = 'YXZ'; } catch {}
+      }
       // Для hit-зони беремо діагональний радіус, але це не впливає на позицію кнопки
       const radius = size.length() / 2;
       baseRadiusRef.current = Math.max(0.1, radius * 1.6);
-      hitCenterRef.current.copy(center);
+      hitCenterRef.current.set(0, 0, 0); // у координатах pivot центр дорівнює (0,0,0)
     } catch (e) {
       baseRadiusRef.current = 0.6;
       hitCenterRef.current.set(0, 0, 0);
@@ -123,8 +142,9 @@ function Model({ url, position, rotation, scale, selected, onUpdate, onSelect, o
 
   // Підганяємо масштаб hit-mesh при зміні масштабу моделі
   useEffect(() => {
-    const scaleFactor = Math.max(scale[0], scale[1], scale[2]);
-    const r = baseRadiusRef.current * scaleFactor;
+    // Тримаймо локальний масштаб хіта рівним базовому радіусу; світовий масштаб
+    // буде множитись масштабом pivot (тобто масштабом моделі)
+    const r = baseRadiusRef.current;
     if (hitMeshRef.current) {
       hitMeshRef.current.scale.set(r, r, r);
     }
@@ -139,15 +159,15 @@ function Model({ url, position, rotation, scale, selected, onUpdate, onSelect, o
 
   // Синхронізуємо rotation імперативно (щоб не перетирати під час pinch)
   useEffect(() => {
-    if (ref.current && !isPinching) {
-      ref.current.rotation.set(rotation[0], rotation[1], rotation[2]);
+    if (pivotRef.current && !isPinching && !isRotating) {
+      pivotRef.current.rotation.set(rotation[0], rotation[1], rotation[2]);
     }
-  }, [rotation, isPinching]);
+  }, [rotation, isPinching, isRotating]);
 
   // Синхронізуємо scale імперативно (щоб не перетирати під час pinch)
   useEffect(() => {
-    if (ref.current && !isPinching) {
-      ref.current.scale.set(scale[0], scale[1], scale[2]);
+    if (pivotRef.current && !isPinching) {
+      pivotRef.current.scale.set(scale[0], scale[1], scale[2]);
     }
   }, [scale, isPinching]);
 
@@ -172,8 +192,8 @@ function Model({ url, position, rotation, scale, selected, onUpdate, onSelect, o
   };
 
   const handlePointerDown = (e: any) => {
-    // Не починати drag під час pinch
-    if (isPinching) {
+    // Не починати новий жест під час активного pinch або rotation
+    if (isPinching || isRotating) {
       e.stopPropagation();
       return;
     }
@@ -231,13 +251,42 @@ function Model({ url, position, rotation, scale, selected, onUpdate, onSelect, o
       } catch {}
     }
 
-    // Якщо об'єкт ще не обрано — обираємо і одразу починаємо drag в цю ж подію
+    // Якщо об'єкт ще не обрано — обираємо і одразу фокусуємось
     if (!selected) {
       onSelect();
+      // Наводимо центр камери на центр моделі (центр pivot)
+      try {
+        if (pivotRef.current) {
+          const wc = new THREE.Vector3();
+          pivotRef.current.getWorldPosition(wc);
+          onFocusCenter?.([wc.x, wc.y, wc.z]);
+        }
+      } catch {}
     }
+    // CAMERA ON: тільки обертання навколо своєї осі (одним пальцем)
+    if (controlsEnabled) {
+      e.stopPropagation();
+      setIsRotating(true);
+      if (pivotRef.current) {
+        rotateStartYRef.current = pivotRef.current.rotation.y;
+        rotateCurrentRef.current.x = pivotRef.current.rotation.x;
+        rotateCurrentRef.current.y = pivotRef.current.rotation.y;
+        rotateTargetRef.current.x = rotateCurrentRef.current.x;
+        rotateTargetRef.current.y = rotateCurrentRef.current.y;
+      }
+      const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+      const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+      lastPointerPosRef.current = { x: clientX, y: clientY };
+      if (e.target && typeof e.target.setPointerCapture === 'function' && e.pointerId != null) {
+        try { e.target.setPointerCapture(e.pointerId); } catch {}
+      }
+      try { invalidate(); } catch {}
+      return;
+    }
+
+    // CAMERA OFF: тільки переміщення (drag)
     e.stopPropagation();
-  setIsDragging(true);
-    // Захоплюємо курсор, щоб події приходили стабільно навіть при виході за межі елемента
+    setIsDragging(true);
     if (e.target && typeof e.target.setPointerCapture === 'function' && e.pointerId != null) {
       try { e.target.setPointerCapture(e.pointerId); } catch {}
     }
@@ -246,31 +295,7 @@ function Model({ url, position, rotation, scale, selected, onUpdate, onSelect, o
     const clientX = e.touches ? e.touches[0].clientX : e.clientX;
     const clientY = e.touches ? e.touches[0].clientY : e.clientY;
 
-    // Реєструємо активний pointer (для pinch через Pointer Events)
-    if (e.pointerId != null) {
-      pointersRef.current.set(e.pointerId, { x: clientX, y: clientY });
-      // Якщо це другий палець — ініціюємо pinch одразу
-      if (pointersRef.current.size === 2 && ref.current) {
-        const arr = Array.from(pointersRef.current.values());
-        const dx = arr[1].x - arr[0].x;
-        const dy = arr[1].y - arr[0].y;
-        const distance = Math.hypot(dx, dy);
-        const angle = Math.atan2(dy, dx);
-        setIsDragging(false);
-        setIsPinching(true);
-        pinchRef.current = {
-          initialDistance: Math.max(distance, 1e-6),
-          initialAngle: angle,
-          initialScale: ref.current.scale.x,
-          initialRotY: ref.current.rotation.y,
-          lastDistance: distance,
-          lastAngle: angle,
-          targetScale: ref.current.scale.x,
-          targetRotY: ref.current.rotation.y,
-        };
-        try { invalidate(); } catch {}
-      }
-    }
+    // Pinch вимкнено — не ініціюємо
     
     // Визначаємо площину drag, перпендикулярну напрямку камери і
     // що проходить через поточну позицію об'єкта (екрано-орієнтована площина).
@@ -300,6 +325,27 @@ function Model({ url, position, rotation, scale, selected, onUpdate, onSelect, o
   };
 
   const handlePointerMove = (e: any) => {
+    // CAMERA ON: обертання по горизонтальному зсуву
+    if (isRotating && pivotRef.current) {
+      const clientX = e.touches ? e.touches[0]?.clientX ?? e.clientX : e.clientX;
+      const clientY = e.touches ? e.touches[0]?.clientY ?? e.clientY : e.clientY;
+      const last = lastPointerPosRef.current;
+      if (last) {
+        const dx = clientX - last.x;
+        const dy = clientY - last.y;
+        const ROT_PER_PX_X = 0.01; // pitch
+        const ROT_PER_PX_Y = 0.01; // yaw
+        // Оновлюємо цілі кути
+        rotateTargetRef.current.y += dx * ROT_PER_PX_Y;
+        rotateTargetRef.current.x += -dy * ROT_PER_PX_X; // рух вгору -> позитивний pitch
+        // Обмежимо pitch, щоб не перевертати об'єкт
+        const maxPitch = Math.PI / 3; // ~60°
+        rotateTargetRef.current.x = Math.max(-maxPitch, Math.min(maxPitch, rotateTargetRef.current.x));
+        try { invalidate(); } catch {}
+      }
+      lastPointerPosRef.current = { x: clientX, y: clientY };
+      return;
+    }
     // Pointer Events pinch: оновлюємо координати по кожному pointer
     if (isPinching && e.pointerId != null) {
       const clientX = e.touches ? e.touches[0]?.clientX ?? e.clientX : e.clientX;
@@ -308,16 +354,20 @@ function Model({ url, position, rotation, scale, selected, onUpdate, onSelect, o
         pointersRef.current.set(e.pointerId, { x: clientX, y: clientY });
       }
       if (pointersRef.current.size >= 2 && pinchRef.current) {
-        const arr = Array.from(pointersRef.current.values());
+        // стабільний порядок за pointerId
+        const arr = Array.from(pointersRef.current.entries())
+          .sort((a, b) => a[0] - b[0])
+          .map(([, v]) => v);
         const dx = arr[1].x - arr[0].x;
         const dy = arr[1].y - arr[0].y;
         const newDist = Math.hypot(dx, dy);
         const newAngle = Math.atan2(dy, dx);
         // Оновлюємо останні виміри
-        const prev = pinchRef.current.prevDistance ?? newDist;
-        pinchRef.current.prevDistance = pinchRef.current.lastDistance ?? newDist;
-        pinchRef.current.lastDistance = newDist;
-        pinchRef.current.lastAngle = newAngle;
+  const prev = pinchRef.current.prevDistance ?? newDist;
+  pinchRef.current.prevDistance = pinchRef.current.lastDistance ?? newDist;
+  pinchRef.current.prevAngle = pinchRef.current.lastAngle ?? newAngle;
+  pinchRef.current.lastDistance = newDist;
+  pinchRef.current.lastAngle = newAngle;
         // Негайне застосування: обчислюємо і ставимо трансформації одразу, без очікування кадру
         if (ref.current) {
           const SENS = 8.4;
@@ -325,23 +375,33 @@ function Model({ url, position, rotation, scale, selected, onUpdate, onSelect, o
           const minS = 0.1;
           const maxS = 3;
           const pr = pinchRef.current;
-          // Посилена екстраполяція (1.5 кроку наперед) для максимально "живого" відгуку
+          // Масштаб: легка екстраполяція; для обертання — тільки інкремент без прогнозу
           const dv = pr.lastDistance - (prev ?? pr.lastDistance);
-          const predicted = pr.lastDistance + dv * 1.5;
+          const predicted = pr.lastDistance + dv * 1.2;
           const rawFactor = predicted / pr.initialDistance;
           const factor = Math.abs(rawFactor - 1) < dead ? 1 : Math.pow(rawFactor, SENS);
-          const desiredScale = THREE.MathUtils.clamp(pr.initialScale * factor, minS, maxS);
-          const desiredRotY = pr.initialRotY + (pr.lastAngle - pr.initialAngle) * 2.2;
+          const desiredScale = controlsEnabled
+            ? pr.initialScale
+            : THREE.MathUtils.clamp(pr.initialScale * factor, minS, maxS);
           pr.targetScale = desiredScale;
-          pr.targetRotY = desiredRotY;
-          ref.current.scale.setScalar(desiredScale);
-          ref.current.rotation.y = desiredRotY;
+          if (pivotRef.current) {
+            pivotRef.current.scale.setScalar(desiredScale);
+            // Інкрементальний поворот навколо ВЛАСНОЇ осі Y (локальної)
+            let d = (pr.lastAngle ?? newAngle) - (pr.prevAngle ?? newAngle);
+            // нормалізація кута до [-PI, PI]
+            const PI2 = Math.PI * 2;
+            while (d > Math.PI) d -= PI2;
+            while (d < -Math.PI) d += PI2;
+            const ROT_SENS = 2.2;
+            pivotRef.current.rotateOnAxis(new THREE.Vector3(0, 1, 0), d * ROT_SENS);
+            pr.targetRotY = pivotRef.current.rotation.y;
+          }
         }
         try { invalidate(); } catch {}
       }
       return;
     }
-    if (isPinching) return; // безпечне повернення
+  if (isPinching || controlsEnabled) return; // у CAMERA ON переміщення вимкнено
     // Рухаємося, щойно почали drag, навіть якщо selected ще не встиг оновитись у батька
     if (!isDragging || !dragStartRef.current) return;
 
@@ -353,19 +413,30 @@ function Model({ url, position, rotation, scale, selected, onUpdate, onSelect, o
   };
 
   const handlePointerUp = (e?: any) => {
+    // Завершення обертання
+    if (isRotating) {
+      if (pivotRef.current) {
+        const ry = pivotRef.current.rotation.y;
+        onUpdate({ rotation: [rotation[0], ry, rotation[2]] });
+      }
+      setIsRotating(false);
+      lastPointerPosRef.current = null;
+      return;
+    }
     // Прибраємо pointer з карти
     if (e && e.pointerId != null) {
       pointersRef.current.delete(e.pointerId);
     }
     // Якщо був pinch і залишився <2 pointers — коміт і завершення pinch
     if (isPinching) {
-      if (ref.current) {
-        const s = ref.current.scale.x;
-        const ry = ref.current.rotation.y;
+      if (pivotRef.current) {
+        const s = pivotRef.current.scale.x;
+        const ry = pivotRef.current.rotation.y;
         onUpdate({ scale: [s, s, s], rotation: [rotation[0], ry, rotation[2]] });
       }
       setIsPinching(false);
       pinchRef.current = null;
+      try { onPinchActiveChange?.(false); } catch {}
       return;
     }
     // Фінал для drag
@@ -407,8 +478,10 @@ function Model({ url, position, rotation, scale, selected, onUpdate, onSelect, o
       const pr = pinchRef.current;
       // Якщо з pointermove вже пораховані targetScale/targetRotY — просто застосовуємо
       if (Number.isFinite(pr.targetScale) && Number.isFinite(pr.targetRotY)) {
-        ref.current.scale.setScalar(pr.targetScale);
-        ref.current.rotation.y = pr.targetRotY;
+        if (pivotRef.current) {
+          pivotRef.current.scale.setScalar(pr.targetScale);
+          // rotation вже застосовано інкрементально у pointermove
+        }
       } else {
         // fallback: швидкий прямий перерахунок без згладжування
         const SENS = 8.4;
@@ -417,17 +490,40 @@ function Model({ url, position, rotation, scale, selected, onUpdate, onSelect, o
         const maxS = 3;
         const prev = pr.prevDistance ?? pr.lastDistance;
         const dv = pr.lastDistance - prev;
-        const predicted = pr.lastDistance + dv * 1.5;
+        const predicted = pr.lastDistance + dv * 1.0;
         const rawFactor = predicted / pr.initialDistance;
         const factor = Math.abs(rawFactor - 1) < dead ? 1 : Math.pow(rawFactor, SENS);
-        const desiredScale = THREE.MathUtils.clamp(pr.initialScale * factor, minS, maxS);
-        const desiredRotY = pr.initialRotY + (pr.lastAngle - pr.initialAngle) * 2.2;
+        const desiredScale = controlsEnabled
+          ? pr.initialScale
+          : THREE.MathUtils.clamp(pr.initialScale * factor, minS, maxS);
         pr.targetScale = desiredScale;
-        pr.targetRotY = desiredRotY;
-        ref.current.scale.setScalar(desiredScale);
-        ref.current.rotation.y = desiredRotY;
+        if (pivotRef.current) {
+          pivotRef.current.scale.setScalar(desiredScale);
+          // Інкрементальний поворот на різницю кутів у fallback
+          if (pr.prevAngle != null && pr.lastAngle != null) {
+            let dAng = pr.lastAngle - pr.prevAngle;
+            const PI2 = Math.PI * 2;
+            while (dAng > Math.PI) dAng -= PI2;
+            while (dAng < -Math.PI) dAng += PI2;
+            const ROT_SENS = 2.2;
+            pivotRef.current.rotateOnAxis(new THREE.Vector3(0, 1, 0), dAng * ROT_SENS);
+          }
+        }
       }
 
+      invalidate();
+    }
+
+    // CAMERA ON: плавне обертання до цільових кутів (м'яке згладжування)
+    if (isRotating && pivotRef.current) {
+      // експоненційне згладжування, стабільне до FPS
+      const k = 12; // швидкість сходження
+      const s = 1 - Math.exp(-k * Math.max(0.001, delta));
+      // оновлюємо поточні значення до цілей
+      rotateCurrentRef.current.x += (rotateTargetRef.current.x - rotateCurrentRef.current.x) * s;
+      rotateCurrentRef.current.y += (rotateTargetRef.current.y - rotateCurrentRef.current.y) * s;
+      // застосовуємо до pivot
+      pivotRef.current.rotation.set(rotateCurrentRef.current.x, rotateCurrentRef.current.y, 0);
       invalidate();
     }
   });
@@ -436,7 +532,7 @@ function Model({ url, position, rotation, scale, selected, onUpdate, onSelect, o
   const savedDprRef = useRef<number | null>(null);
   useEffect(() => {
     try {
-      if (isDragging || isPinching) {
+      if (isDragging || isPinching || isRotating) {
         if (savedDprRef.current == null) savedDprRef.current = (gl as any).getPixelRatio?.() ?? null;
         (gl as any).setPixelRatio?.(1);
       } else if (savedDprRef.current != null) {
@@ -444,22 +540,25 @@ function Model({ url, position, rotation, scale, selected, onUpdate, onSelect, o
         savedDprRef.current = null;
       }
     } catch {}
-  }, [isDragging, isPinching, gl]);
+  }, [isDragging, isPinching, isRotating, gl]);
 
   // Глобальний страховий ресет на випадок загубленого pointerup/touchend
   useEffect(() => {
     const onAnyUp = () => {
       if (isDragging) {
         handlePointerUp();
+      } else if (isRotating) {
+        handlePointerUp();
       } else if (isPinching) {
         // Коміт pinch і скидання
-        if (ref.current) {
-          const s = ref.current.scale.x;
-          const ry = ref.current.rotation.y;
+        if (pivotRef.current) {
+          const s = pivotRef.current.scale.x;
+          const ry = pivotRef.current.rotation.y;
           onUpdate({ scale: [s, s, s], rotation: [rotation[0], ry, rotation[2]] });
         }
         setIsPinching(false);
         pinchRef.current = null;
+        try { onPinchActiveChange?.(false); } catch {}
         pointersRef.current.clear();
       }
     };
@@ -473,7 +572,7 @@ function Model({ url, position, rotation, scale, selected, onUpdate, onSelect, o
       document.removeEventListener('touchend', onAnyUp as any);
       document.removeEventListener('touchcancel', onAnyUp as any);
     };
-  }, [isDragging, isPinching, onUpdate, rotation]);
+  }, [isDragging, isPinching, isRotating, onUpdate, rotation]);
 
   // Ресет жести при зміні складу layout (додавання/видалення)
   useEffect(() => {
@@ -483,13 +582,14 @@ function Model({ url, position, rotation, scale, selected, onUpdate, onSelect, o
       handlePointerUp();
     }
     if (isPinching) {
-      if (ref.current) {
-        const s = ref.current.scale.x;
-        const ry = ref.current.rotation.y;
+      if (pivotRef.current) {
+        const s = pivotRef.current.scale.x;
+        const ry = pivotRef.current.rotation.y;
         onUpdate({ scale: [s, s, s], rotation: [rotation[0], ry, rotation[2]] });
       }
       setIsPinching(false);
       pinchRef.current = null;
+      try { onPinchActiveChange?.(false); } catch {}
     }
     pointersRef.current.clear();
   }, [layoutEpoch]);
@@ -509,27 +609,15 @@ function Model({ url, position, rotation, scale, selected, onUpdate, onSelect, o
       }
       setIsPinching(false);
       pinchRef.current = null;
+      try { onPinchActiveChange?.(false); } catch {}
     }
   }, [controlsEnabled]);
 
   // Handle gestures using wheel for scale (desktop) and touch events will be handled via DOM
   useEffect(() => {
-    if (!selected || !ref.current) return;
-
-    const handleWheel = (e: WheelEvent) => {
-      e.preventDefault();
-      // Ще вища чутливість коліщатка (було 0.0025)
-  const delta = e.deltaY * -0.008;
-      const newScale = Math.max(0.1, Math.min(3, scale[0] + delta));
-      onUpdate({
-        scale: [newScale, newScale, newScale]
-      });
-    };
-
-    const canvas = gl.domElement;
-    canvas.addEventListener('wheel', handleWheel, { passive: false });
-    return () => canvas.removeEventListener('wheel', handleWheel);
-  }, [selected, scale, onUpdate, gl]);
+    // Вимикаємо масштабування колесом у всіх режимах
+    return;
+  }, [selected, scale, onUpdate, gl, controlsEnabled]);
 
   // НОВИЙ: Глобальний слухач для drag - модель слідує за пальцем завжди
   useEffect(() => {
@@ -613,11 +701,38 @@ function Model({ url, position, rotation, scale, selected, onUpdate, onSelect, o
     };
   }, [isPinching, gl, handlePointerMove, handlePointerUp]);
 
+  // Додаткові глобальні Pointer Events під час rotation (CAMERA ON) для максимальної частоти оновлень
+  useEffect(() => {
+    if (!isRotating) return;
+    const canvas = gl.domElement;
+    const onMove = (e: PointerEvent) => handlePointerMove(e as any);
+    const onUp = (e: PointerEvent) => handlePointerUp(e as any);
+    const onCancel = (e: PointerEvent) => handlePointerUp(e as any);
+    const onRaw = (e: Event) => handlePointerMove(e as any);
+    canvas.addEventListener('pointermove', onMove, { passive: true });
+    canvas.addEventListener('pointerup', onUp, { passive: true });
+    canvas.addEventListener('pointercancel', onCancel, { passive: true });
+    (canvas as any).addEventListener?.('pointerrawupdate', onRaw, { passive: true });
+    document.addEventListener('pointermove', onMove, { passive: true });
+    document.addEventListener('pointerup', onUp, { passive: true });
+    document.addEventListener('pointercancel', onCancel, { passive: true });
+    return () => {
+      canvas.removeEventListener('pointermove', onMove as any);
+      canvas.removeEventListener('pointerup', onUp as any);
+      canvas.removeEventListener('pointercancel', onCancel as any);
+      (canvas as any).removeEventListener?.('pointerrawupdate', onRaw as any);
+      document.removeEventListener('pointermove', onMove as any);
+      document.removeEventListener('pointerup', onUp as any);
+      document.removeEventListener('pointercancel', onCancel as any);
+    };
+  }, [isRotating, gl, handlePointerMove, handlePointerUp]);
+
   // Обчислення позиції та розміру 3D кнопки видалення (заміна Html-оверлею)
+  // Позиція кнопки відносно pivot (центр = 0,0,0)
   const deleteBtnPosition: [number, number, number] = [
-    bboxCenterRef.current.x + bboxSizeRef.current.x / 2 + Math.max(0.03, Math.min(0.12, bboxSizeRef.current.x * 0.15)),
-    bboxCenterRef.current.y + bboxSizeRef.current.y / 2 + Math.max(0.03, Math.min(0.15, bboxSizeRef.current.y * 0.1)),
-    bboxCenterRef.current.z
+    bboxSizeRef.current.x / 2 + Math.max(0.03, Math.min(0.12, bboxSizeRef.current.x * 0.15)),
+    bboxSizeRef.current.y / 2 + Math.max(0.03, Math.min(0.15, bboxSizeRef.current.y * 0.1)),
+    0
   ];
   const deleteBtnRadius = Math.max(0.05, Math.min(0.14, Math.max(bboxSizeRef.current.x, bboxSizeRef.current.y) * 0.12));
 
@@ -636,58 +751,59 @@ function Model({ url, position, rotation, scale, selected, onUpdate, onSelect, o
       onPointerLeave={handlePointerUp}
       dispose={null}
     >
-      {/* Невидима збільшена зона торкання навколо моделі */}
-      {hitGeomRef.current && (
-        <mesh
-          position={[hitCenterRef.current.x, hitCenterRef.current.y, hitCenterRef.current.z]}
-          geometry={hitGeomRef.current}
-          // Робимо меш видимим для raycaster, але повністю прозорим для рендера
-          visible={true}
-          ref={(m) => { hitMeshRef.current = m; }}
-          onPointerDown={handlePointerDown}
-          onPointerMove={handlePointerMove}
-          onPointerUp={handlePointerUp}
-          onPointerCancel={handlePointerUp}
-        >
-          <meshBasicMaterial color="#000000" transparent opacity={0} depthWrite={false} />
-        </mesh>
-      )}
-      {/* 3D кнопка видалення: білборд у верхньо-правому куті моделі */}
-      {selected && (
-        <Billboard position={deleteBtnPosition} follow>
-          <group
-            onPointerDown={(e) => { e.stopPropagation(); onRemove(); }}
-            onClick={(e) => { e.stopPropagation(); onRemove(); }}
+      {/* Вісь обертання у центрі bbox */}
+      <group ref={pivotRef}>
+        {/* Невидима збільшена зона торкання навколо моделі (у координатах pivot) */}
+        {hitGeomRef.current && (
+          <mesh
+            position={[hitCenterRef.current.x, hitCenterRef.current.y, hitCenterRef.current.z]}
+            geometry={hitGeomRef.current}
+            visible={true}
+            ref={(m) => { hitMeshRef.current = m; }}
+            onPointerDown={handlePointerDown}
+            onPointerMove={handlePointerMove}
+            onPointerUp={handlePointerUp}
+            onPointerCancel={handlePointerUp}
           >
-            {/* Фонова кнопка-коло */}
-            <mesh>
-              <circleGeometry args={[deleteBtnRadius, 48]} />
-              <meshBasicMaterial color="#ff1744" transparent opacity={0.95} depthTest={false} />
-            </mesh>
-            {/* Хрестик як дві тонкі планки, щоб не використовувати 3D Text */}
-            <group position={[0, 0, 0.001]}>
-              <mesh rotation={[0, 0, Math.PI / 4]}>
-                <planeGeometry args={[deleteBtnRadius * 1.4, deleteBtnRadius * 0.22]} />
-                <meshBasicMaterial color="#ffffff" transparent opacity={0.95} depthTest={false} />
+            <meshBasicMaterial color="#000000" transparent opacity={0} depthWrite={false} />
+          </mesh>
+        )}
+        {/* 3D кнопка видалення, кріпиться до pivot, щоб обертатись разом з моделлю */}
+        {selected && (
+          <Billboard position={deleteBtnPosition} follow>
+            <group
+              onPointerDown={(e) => { e.stopPropagation(); onRemove(); }}
+              onClick={(e) => { e.stopPropagation(); onRemove(); }}
+            >
+              <mesh>
+                <circleGeometry args={[deleteBtnRadius, 48]} />
+                <meshBasicMaterial color="#ff1744" transparent opacity={0.95} depthTest={false} />
               </mesh>
-              <mesh rotation={[0, 0, -Math.PI / 4]}>
-                <planeGeometry args={[deleteBtnRadius * 1.4, deleteBtnRadius * 0.22]} />
-                <meshBasicMaterial color="#ffffff" transparent opacity={0.95} depthTest={false} />
-              </mesh>
+              <group position={[0, 0, 0.001]}>
+                <mesh rotation={[0, 0, Math.PI / 4]}>
+                  <planeGeometry args={[deleteBtnRadius * 1.4, deleteBtnRadius * 0.22]} />
+                  <meshBasicMaterial color="#ffffff" transparent opacity={0.95} depthTest={false} />
+                </mesh>
+                <mesh rotation={[0, 0, -Math.PI / 4]}>
+                  <planeGeometry args={[deleteBtnRadius * 1.4, deleteBtnRadius * 0.22]} />
+                  <meshBasicMaterial color="#ffffff" transparent opacity={0.95} depthTest={false} />
+                </mesh>
+              </group>
             </group>
-          </group>
-        </Billboard>
-      )}
-      {/* 3D текстова підказка тимчасово вимкнена */}
-      {/* Використовуємо власну глибоку копію GLTF замість Clone і вимикаємо авто-диспоз */}
-      <primitive
-        object={clonedScene}
-        dispose={null}
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={handlePointerUp}
-        onPointerCancel={handlePointerUp}
-      />
+          </Billboard>
+        )}
+        {/* Вміст моделі зсунений так, щоб pivot був у центрі */}
+        <group ref={contentRef}>
+          <primitive
+            object={clonedScene}
+            dispose={null}
+            onPointerDown={handlePointerDown}
+            onPointerMove={handlePointerMove}
+            onPointerUp={handlePointerUp}
+            onPointerCancel={handlePointerUp}
+          />
+        </group>
+      </group>
     </group>
   );
 }
@@ -720,6 +836,9 @@ const Overlay3D: React.FC<Overlay3DProps> = ({ mode }) => {
   const [layoutEpoch, setLayoutEpoch] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [cameraControlEnabled, setCameraControlEnabled] = useState(false);
+  const controlsRef = useRef<any>(null);
+  const lastCentersRef = useRef<Map<string, [number, number, number]>>(new Map());
+  const [pinchingIds, setPinchingIds] = useState<Set<string>>(new Set());
   // isolation mode видалено
 
   useEffect(() => {
@@ -939,7 +1058,13 @@ const Overlay3D: React.FC<Overlay3DProps> = ({ mode }) => {
         <EpochInvalidator epoch={layoutEpoch} />
         <ambientLight intensity={0.7} />
         <directionalLight position={[10, 10, 10]} />
-        <OrbitControls enabled={cameraControlEnabled} enablePan enableZoom />
+        <OrbitControls
+          ref={controlsRef}
+          enabled={false}
+          enablePan={false}
+          enableZoom={false}
+          enableRotate={false}
+        />
         <Suspense fallback={null}>
           <PreloadModels urls={layout.map(m => m.url)} />
           {layout.map((m) => (
@@ -947,12 +1072,27 @@ const Overlay3D: React.FC<Overlay3DProps> = ({ mode }) => {
               key={`${m.id}-${layoutEpoch}`}
               {...m}
               mode={mode}
-              controlsEnabled={cameraControlEnabled}
+              controlsEnabled={cameraControlEnabled && pinchingIds.size === 0}
               selected={selectedId === m.id}
               layoutEpoch={layoutEpoch}
               onUpdate={(data: any) => handleUpdateModel(m.id, data)}
               onSelect={() => setSelectedId(m.id)}
               onRemove={() => handleRemoveModel(m.id)}
+              onPinchActiveChange={(active: boolean) => {
+                setPinchingIds((prev) => {
+                  const next = new Set(prev);
+                  if (active) next.add(m.id);
+                  else next.delete(m.id);
+                  return next;
+                });
+              }}
+              onFocusCenter={(worldCenter) => {
+                lastCentersRef.current.set(m.id, worldCenter);
+                if (controlsRef.current?.target) {
+                  controlsRef.current.target.set(worldCenter[0], worldCenter[1], worldCenter[2]);
+                  try { controlsRef.current.update(); } catch {}
+                }
+              }}
             />
           ))}
           <Preload all />
@@ -966,7 +1106,18 @@ const Overlay3D: React.FC<Overlay3DProps> = ({ mode }) => {
         <Button 
           variant={cameraControlEnabled ? "contained" : "outlined"}
           color="warning"
-          onClick={() => setCameraControlEnabled(!cameraControlEnabled)}
+          onClick={() => {
+            const next = !cameraControlEnabled;
+            setCameraControlEnabled(next);
+            // Якщо вмикаємо камеру і є обраний об'єкт — фокусуємось на ньому
+            if (next && selectedId) {
+              const c = lastCentersRef.current.get(selectedId);
+              if (c && controlsRef.current?.target) {
+                controlsRef.current.target.set(c[0], c[1], c[2]);
+                try { controlsRef.current.update(); } catch {}
+              }
+            }
+          }}
           sx={{ 
             fontWeight: 600,
             minWidth: 140,
@@ -976,7 +1127,7 @@ const Overlay3D: React.FC<Overlay3DProps> = ({ mode }) => {
             }
           }}
         >
-          🎥 {cameraControlEnabled ? 'КАМЕРА ON' : 'КАМЕРА OFF'}
+          {cameraControlEnabled ? 'Rotate mode' : 'Move mode'}
         </Button>
         {/* ISOLATION MODE видалено з інтерфейсу */}
         <Button variant="contained" onClick={handleScreenshot}>SAVE IMAGE</Button>
