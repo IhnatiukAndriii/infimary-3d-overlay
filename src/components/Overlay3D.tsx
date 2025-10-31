@@ -300,33 +300,65 @@ function Model({ modelId, url, position, rotation, scale, selected, onUpdate, on
   
   
   
+  // ✅ UNIFIED SYNC: Synchronize BOTH localPosition and ref.position from props
+  // This replaces 3 separate useEffects that were conflicting
   useEffect(() => {
     if (!initializedRef.current) return;
 
     const nextFromProps: [number, number, number] = [position[0], position[1], position[2]];
-    const lastApplied = lastPropPositionForLocalRef.current;
     const parentPrev = lastParentPropPositionRef.current;
     const changed = !parentPrev || !arePositionsClose(parentPrev, nextFromProps);
 
-    if (!changed) return;
-
-    lastParentPropPositionRef.current = [...nextFromProps] as [number, number, number];
-
-    if (isDragging || isPinching || isRotating) {
-      pendingLocalSyncRef.current = [...nextFromProps] as [number, number, number];
+    if (!changed) {
+      // Position hasn't changed, skip all syncs
       return;
     }
 
     console.log(
-      `[${modelId.slice(0,8)}] 📥 Syncing localPosition from prop:`,
-      'from:', lastApplied,
+      `[${modelId.slice(0,8)}] 🔍 Position prop changed:`,
+      'from:', parentPrev,
       'to:', nextFromProps
     );
-    commitLocalPosition(nextFromProps);
-  }, [position, isDragging, isPinching, isRotating, modelId]);
+
+    lastParentPropPositionRef.current = [...nextFromProps] as [number, number, number];
+
+    // Defer sync if user is actively manipulating this model
+    if (isDragging || isPinching || isRotating) {
+      pendingLocalSyncRef.current = [...nextFromProps] as [number, number, number];
+      pendingRefSyncRef.current = [...nextFromProps] as [number, number, number];
+      console.log(`[${modelId.slice(0,8)}] ⏸️ Sync deferred (gesture active)`);
+      return;
+    }
+
+    // Sync localPosition state
+    const lastApplied = lastPropPositionForLocalRef.current;
+    if (!lastApplied || !arePositionsClose(lastApplied, nextFromProps)) {
+      console.log(`[${modelId.slice(0,8)}] 📥 Syncing localPosition:`, nextFromProps);
+      commitLocalPosition(nextFromProps);
+    }
+
+    // Sync ref.current.position (Three.js object)
+    if (ref.current) {
+      const currentRefPos: [number, number, number] = [
+        ref.current.position.x,
+        ref.current.position.y,
+        ref.current.position.z
+      ];
+      if (!arePositionsClose(currentRefPos, nextFromProps)) {
+        console.log(`[${modelId.slice(0,8)}] 🔄 Syncing ref.position:`, 
+          'from:', currentRefPos, 'to:', nextFromProps);
+        commitRefPosition(nextFromProps);
+      } else {
+        console.log(`[${modelId.slice(0,8)}] ⏭️ Ref already at target, skip sync`);
+      }
+    } else {
+      // Ref not ready yet, defer
+      pendingRefSyncRef.current = [...nextFromProps] as [number, number, number];
+    }
+  }, [position, isDragging, isPinching, isRotating, modelId, arePositionsClose]);
   
   
-  
+  // SYNC #1: layoutEpoch changed → force sync on structure change (add/remove models)
   useEffect(() => {
     if (layoutEpoch == null) return;
     const nextFromProps: [number, number, number] = [position[0], position[1], position[2]];
@@ -342,41 +374,24 @@ function Model({ modelId, url, position, rotation, scale, selected, onUpdate, on
       return;
     }
 
+    // ✅ Check if ref position already matches prop position
+    const currentRefPos: [number, number, number] = [
+      ref.current.position.x,
+      ref.current.position.y,
+      ref.current.position.z
+    ];
+    if (arePositionsClose(currentRefPos, nextFromProps)) {
+      console.log(`[${modelId.slice(0,8)}] ⏭️ LayoutEpoch sync skipped (already at target)`);
+      return;
+    }
+
     const beforeSync = ref.current.position.toArray();
     commitRefPosition(nextFromProps);
-    console.log(`[${modelId.slice(0,8)}] 🔄 SYNC #1 (layoutEpoch ${layoutEpoch}):`,
+    console.log(`[${modelId.slice(0,8)}] 🔄 LayoutEpoch sync (${layoutEpoch}):`,
       'from:', beforeSync, 'to:', nextFromProps);
     
   
-  }, [layoutEpoch, position, modelId]);
-
-  
-  useEffect(() => {
-    const nextFromProps: [number, number, number] = [position[0], position[1], position[2]];
-    const parentPrev = lastParentPropPositionRef.current;
-    const changed = !parentPrev || !arePositionsClose(parentPrev, nextFromProps);
-
-    if (!changed) return;
-
-    lastParentPropPositionRef.current = [...nextFromProps] as [number, number, number];
-
-    if (isDragging || isPinching || isRotating) {
-      pendingRefSyncRef.current = [...nextFromProps] as [number, number, number];
-      return;
-    }
-
-    if (!ref.current) {
-      pendingRefSyncRef.current = [...nextFromProps] as [number, number, number];
-      return;
-    }
-
-    const beforeSync = ref.current.position.toArray();
-    commitRefPosition(nextFromProps);
-    console.log(`[${modelId.slice(0,8)}] 🔄 SYNC #2 (position prop changed):`,
-      'from:', beforeSync, 'to:', nextFromProps);
-  
-  }, [position, modelId]);
-  
+  }, [layoutEpoch, position, modelId, arePositionsClose]);
 
   
   useEffect(() => {
@@ -1513,10 +1528,34 @@ const Overlay3D: React.FC<Overlay3DProps> = ({ mode, layout, onLayoutChange }) =
   };
 
   const handleUpdateModel = (id: string, data: Partial<Pick<ModelData, "position" | "rotation" | "scale">>) => {
-    updateModels((prev) => prev.map((obj) => (obj.id === id ? { ...obj, ...data } : obj)));
-    
-    
-    
+    console.log(`[handleUpdateModel] Called for model: ${id.slice(0,8)}`, 'data:', data);
+    updateModels((prev) => {
+      console.log(`[handleUpdateModel] Current models:`, prev.map(m => `${m.id.slice(0,8)}: pos=[${m.position.map(v => v.toFixed(2)).join(',')}]`).join(' | '));
+      
+      let changed = false;
+      const next = prev.map((obj) => {
+        if (obj.id !== id) return obj;
+        
+        console.log(`[handleUpdateModel] Found target model ${obj.id.slice(0,8)}, current pos:`, obj.position);
+        
+        // ✅ Check if data actually changed before creating new object
+        const posChanged = data.position && obj.position.some((v, i) => Math.abs(v - data.position![i]) > 0.0001);
+        const rotChanged = data.rotation && obj.rotation.some((v, i) => Math.abs(v - data.rotation![i]) > 0.0001);
+        const scaleChanged = data.scale && obj.scale.some((v, i) => Math.abs(v - data.scale![i]) > 0.0001);
+        
+        if (!posChanged && !rotChanged && !scaleChanged) {
+          console.log(`[${id.slice(0,8)}] ⏭️ Update skipped (no real change)`);
+          return obj; // Return same reference if nothing changed
+        }
+        
+        changed = true;
+        console.log(`[${id.slice(0,8)}] ✏️ Updating model from:`, obj.position, 'to:', data.position);
+        return { ...obj, ...data };
+      });
+      
+      console.log(`[handleUpdateModel] Result models:`, next.map(m => `${m.id.slice(0,8)}: pos=[${m.position.map(v => v.toFixed(2)).join(',')}]`).join(' | '));
+      return changed ? next : prev; // Return same array if nothing changed
+    });
   };
 
   const handleRemoveModel = (id: string) => {
@@ -1667,7 +1706,10 @@ const Overlay3D: React.FC<Overlay3DProps> = ({ mode, layout, onLayoutChange }) =
             <MemoModel
               key={m.id}
               modelId={m.id}
-              {...m}
+              url={m.url}
+              position={m.position}
+              rotation={m.rotation}
+              scale={m.scale}
               mode={mode}
               controlsEnabled={cameraControlEnabled && pinchingIds.size === 0}
               selected={selectedId === m.id}
