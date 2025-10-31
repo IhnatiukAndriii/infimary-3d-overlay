@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect, Suspense } from "react";
+import React, { useRef, useState, useEffect, Suspense, useCallback } from "react";
 import { Canvas, useThree, useFrame } from "@react-three/fiber";
 import { OrbitControls, useGLTF, Clone, Billboard, Preload } from "@react-three/drei";
 import { Button } from "@mui/material";
@@ -6,16 +6,29 @@ import * as THREE from "three";
 import ModelGallery from "./ModelGallery";
 import "./Overlay3D.css";
 
-// Simple Close icon component
+
 const CloseIcon = () => (
   <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
     <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
   </svg>
 );
 
-type Overlay3DProps = { mode: "mobile" | "desktop" };
+export type ModelData = {
+  id: string;
+  url: string;
+  position: [number, number, number];
+  rotation: [number, number, number];
+  scale: [number, number, number];
+};
+
+type Overlay3DProps = {
+  mode: "mobile" | "desktop";
+  layout: ModelData[];
+  onLayoutChange: (layout: ModelData[]) => void;
+};
 
 type ModelProps = {
+  modelId: string;
   url: string;
   position: [number, number, number];
   rotation: [number, number, number];
@@ -29,21 +42,34 @@ type ModelProps = {
   layoutEpoch?: number;
   onPinchActiveChange?: (active: boolean) => void;
   onFocusCenter?: (worldCenter: [number, number, number]) => void;
+  activeGestureId?: string | null;
+  onGestureStart?: (id: string, type: 'drag' | 'rotate' | 'pinch') => boolean;
+  onGestureEnd?: (id: string, type: 'drag' | 'rotate' | 'pinch') => void;
 };
 
-function Model({ url, position, rotation, scale, selected, onUpdate, onSelect, onRemove, controlsEnabled, layoutEpoch, onPinchActiveChange, onFocusCenter }: ModelProps) {
+function Model({ modelId, url, position, rotation, scale, selected, onUpdate, onSelect, onRemove, controlsEnabled, layoutEpoch, onPinchActiveChange, onFocusCenter, activeGestureId, onGestureStart, onGestureEnd }: ModelProps) {
   const { scene } = (useGLTF(url) as unknown) as { scene: THREE.Object3D };
-  // Створюємо глибоку копію GLTF-сцени один раз на екземпляр моделі,
-  // щоб уникнути неочікуваного спільного стану/диспозу між клонованими об'єктами
+  
+  
+  
+  const [localPosition, setLocalPosition] = useState<[number, number, number]>([0, 0, 0]);
+  const [localRotation, setLocalRotation] = useState<[number, number, number]>([0, 0, 0]);
+  const [localScale, setLocalScale] = useState<[number, number, number]>([1, 1, 1]);
+  
+  
+  const initializedRef = useRef(false);
+  
+  
+  
   const clonedScene = React.useMemo(() => {
     try {
       const c = scene.clone(true);
-      // Забезпечимо стабільну взаємодію: вимикаємо frustumCulled і гарантуємо оновлення матриць
+      
       c.traverse((obj: any) => {
         if (obj && typeof obj === 'object') {
-          if ('frustumCulled' in obj) obj.frustumCulled = false;
+          
           if ('matrixAutoUpdate' in obj) obj.matrixAutoUpdate = true;
-          // Деякі GLTF мають MeshBasicMaterial з transparent: переконаємось, що вони raycastable
+          
           if (obj.isMesh && !obj.raycast) obj.raycast = THREE.Mesh.prototype.raycast;
         }
       });
@@ -51,22 +77,55 @@ function Model({ url, position, rotation, scale, selected, onUpdate, onSelect, o
     } catch {
       return scene;
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    
   }, [scene]);
+
+  
+  useEffect(() => {
+    return () => {
+      try {
+        if (clonedScene && clonedScene !== scene) {
+          clonedScene.traverse((obj: any) => {
+            if (!obj) return;
+            if (obj.geometry && typeof obj.geometry.dispose === 'function') {
+              try { obj.geometry.dispose(); } catch {}
+            }
+            if (obj.material) {
+              const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+              mats.forEach((m: any) => {
+                if (!m) return;
+                
+                ['map','normalMap','roughnessMap','metalnessMap','aoMap','emissiveMap','alphaMap','bumpMap','displacementMap','envMap','lightMap','specularMap','clearcoatNormalMap'].forEach((key) => {
+                  const tex = (m as any)[key];
+                  if (tex && typeof tex.dispose === 'function') {
+                    try { tex.dispose(); } catch {}
+                  }
+                });
+                if (typeof m.dispose === 'function') {
+                  try { m.dispose(); } catch {}
+                }
+              });
+            }
+          });
+        }
+      } catch {}
+    };
+  }, [clonedScene, scene]);
   const ref = useRef<THREE.Group>(null!);
-  const pivotRef = useRef<THREE.Group>(null!); // центр обертання моделі (bbox-центр)
-  const contentRef = useRef<THREE.Group>(null!); // вміст моделі, зсунений на -bboxCenter
+  const pivotRef = useRef<THREE.Group>(null!); 
+  const contentRef = useRef<THREE.Group>(null!); 
   const { camera, gl, invalidate } = useThree();
   const [isDragging, setIsDragging] = useState(false);
   const [isPinching, setIsPinching] = useState(false);
   const [isRotating, setIsRotating] = useState(false);
   const dragStartRef = useRef<{
+    modelId: string; 
     x: number;
     y: number;
-    objStart: THREE.Vector3; // початкова позиція об'єкта
-    planeNormal: THREE.Vector3; // нормаль площини drag (за замовчуванням до камери)
-    planeConstant: number; // константа площини: -n·p
-    offset: THREE.Vector3; // objectPos - worldTouch
+    objStart: THREE.Vector3; 
+    planeNormal: THREE.Vector3; 
+    planeConstant: number; 
+    offset: THREE.Vector3; 
   } | null>(null);
   const lastPointerPosRef = useRef<{ x: number; y: number } | null>(null);
   const lastMoveTimeRef = useRef<number>(0);
@@ -80,20 +139,45 @@ function Model({ url, position, rotation, scale, selected, onUpdate, onSelect, o
   const hitMeshRef = useRef<THREE.Mesh | null>(null);
   const baseRadiusRef = useRef<number>(0.6);
   const rotateStartYRef = useRef<number>(0);
-  // Цілі та поточні значення обертання для плавного згладжування у CAMERA ON
+  
+  const dragPlaneRef = useRef<THREE.Plane>(new THREE.Plane());
+  const lastDragPlaneRef = useRef<{ normal: THREE.Vector3; point: THREE.Vector3 } | null>(null);
+  
+  const canvasRectRef = useRef<DOMRect | null>(null);
+  
   const rotateTargetRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const rotateCurrentRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
-  // Контроль натиску на кнопку видалення
+  
+  const activeDragPointerIdRef = useRef<number | null>(null);
+  
+  const dragActivatedRef = useRef<boolean>(false);
+  const DRAG_THRESHOLD_PX = 4;
+  
+  const lastGestureEndTimeRef = useRef<number>(0);
+  
+  const dragEndingRef = useRef<boolean>(false);
+  
+  const pendingDragRef = useRef<null | {
+    modelId: string;
+    x: number; y: number;
+    objStart: THREE.Vector3;
+    planeNormal: THREE.Vector3;
+    planeConstant: number;
+    offset: THREE.Vector3;
+  }>(null);
+  
   const deleteEnableAtRef = useRef<number>(0);
+  
+  const dragEnableAtRef = useRef<number>(0);
   const deletePressRef = useRef<{
     downX: number;
     downY: number;
     time: number;
     wasInside: boolean;
   } | null>(null);
-  // Активні pointers для pinch (Pointer Events)
+  
   const pointersRef = useRef<Map<number, { x: number; y: number }>>(new Map());
-  // Pinch gesture state
+  
   const pinchRef = useRef<{
     initialDistance: number;
     initialAngle: number;
@@ -106,8 +190,32 @@ function Model({ url, position, rotation, scale, selected, onUpdate, onSelect, o
     targetScale: number;
     targetRotY: number;
   } | null>(null);
+  const lastPropPositionForLocalRef = useRef<[number, number, number] | null>(null);
+  const lastPropPositionForRefSyncRef = useRef<[number, number, number] | null>(null);
+  const arePositionsClose = useCallback((a: [number, number, number], b: [number, number, number], eps = 0.0001) => {
+    return (
+      Math.abs(a[0] - b[0]) <= eps &&
+      Math.abs(a[1] - b[1]) <= eps &&
+      Math.abs(a[2] - b[2]) <= eps
+    );
+  }, []);
+  const pendingLocalSyncRef = useRef<[number, number, number] | null>(null);
+  const pendingRefSyncRef = useRef<[number, number, number] | null>(null);
+  const lastParentPropPositionRef = useRef<[number, number, number] | null>(null);
+  const commitLocalPosition = (next: [number, number, number]) => {
+    setLocalPosition(next);
+    lastPropPositionForLocalRef.current = [...next] as [number, number, number];
+  };
+  const commitRefPosition = (next: [number, number, number]) => {
+    if (!ref.current) {
+      pendingRefSyncRef.current = [...next] as [number, number, number];
+      return;
+    }
+    ref.current.position.set(next[0], next[1], next[2]);
+    lastPropPositionForRefSyncRef.current = [...next] as [number, number, number];
+  };
 
-  // Обчислюємо базову геометрію та розміри моделі для hit-зони і позиції кнопки
+  
   useEffect(() => {
     try {
       const box = new THREE.Box3().setFromObject(scene);
@@ -115,29 +223,29 @@ function Model({ url, position, rotation, scale, selected, onUpdate, onSelect, o
       const size = new THREE.Vector3();
       box.getCenter(center);
       box.getSize(size);
-      // Зберігаємо центр і розмір bbox для коректного розміщення кнопки
+      
       bboxCenterRef.current.copy(center);
       bboxSizeRef.current.copy(size);
-      // Нормалізуємо pivot: зсуваємо вміст на -center, а pivot групу ставимо в +center
+      
       if (contentRef.current) {
         contentRef.current.position.set(-center.x, -center.y, -center.z);
       }
       if (pivotRef.current) {
         pivotRef.current.position.set(center.x, center.y, center.z);
-        // Для стабільного pitch/yaw обертання використаємо порядок YXZ
+        
         try { pivotRef.current.rotation.order = 'YXZ'; } catch {}
       }
-      // Для hit-зони беремо діагональний радіус, але це не впливає на позицію кнопки
+      
       const radius = size.length() / 2;
       baseRadiusRef.current = Math.max(0.1, radius * 1.6);
-      hitCenterRef.current.set(0, 0, 0); // у координатах pivot центр дорівнює (0,0,0)
+      hitCenterRef.current.set(0, 0, 0); 
     } catch (e) {
       baseRadiusRef.current = 0.6;
       hitCenterRef.current.set(0, 0, 0);
       bboxCenterRef.current.set(0, 0, 0);
       bboxSizeRef.current.set(1, 1, 1);
     }
-    // створюємо геометрію одиничного радіуса один раз
+    
     if (hitGeomRef.current) hitGeomRef.current.dispose();
     hitGeomRef.current = new THREE.SphereGeometry(1, 16, 12);
     return () => {
@@ -148,76 +256,224 @@ function Model({ url, position, rotation, scale, selected, onUpdate, onSelect, o
     };
   }, [scene]);
 
-  // Підганяємо масштаб hit-mesh при зміні масштабу моделі
+  
   useEffect(() => {
-    // Тримаймо локальний масштаб хіта рівним базовому радіусу; світовий масштаб
-    // буде множитись масштабом pivot (тобто масштабом моделі)
+    
+    
     const r = baseRadiusRef.current;
     if (hitMeshRef.current) {
       hitMeshRef.current.scale.set(r, r, r);
     }
   }, [scale]);
 
-  // Синхронізуємо position
+  
+  const initialPositionSet = useRef(false);
   useEffect(() => {
-    if (ref.current && !isDragging) {
+    if (ref.current && !initialPositionSet.current) {
+      
       ref.current.position.set(position[0], position[1], position[2]);
+      console.log(`[${modelId.slice(0,8)}] Initialized ref.position from props:`, position);
+      
+      
+      const actualPos: [number, number, number] = [
+        ref.current.position.x,
+        ref.current.position.y,
+        ref.current.position.z
+      ];
+      commitLocalPosition(actualPos);
+      setLocalRotation(rotation);
+      setLocalScale(scale);
+      lastPropPositionForRefSyncRef.current = [...actualPos] as [number, number, number];
+  lastParentPropPositionRef.current = [...actualPos] as [number, number, number];
+      
+      console.log(`[${modelId.slice(0,8)}] Set localPosition from ref:`, actualPos);
+      
+      initialPositionSet.current = true;
+      initializedRef.current = true;
     }
-  }, [position, isDragging]);
+  }, [position, rotation, scale, modelId]);
+  
+  
+  
+  
+  
+  
+  
+  
+  useEffect(() => {
+    if (!initializedRef.current) return;
 
-  // Синхронізуємо rotation імперативно (щоб не перетирати під час pinch)
+    const nextFromProps: [number, number, number] = [position[0], position[1], position[2]];
+    const lastApplied = lastPropPositionForLocalRef.current;
+    const parentPrev = lastParentPropPositionRef.current;
+    const changed = !parentPrev || !arePositionsClose(parentPrev, nextFromProps);
+
+    if (!changed) return;
+
+    lastParentPropPositionRef.current = [...nextFromProps] as [number, number, number];
+
+    if (isDragging || isPinching || isRotating) {
+      pendingLocalSyncRef.current = [...nextFromProps] as [number, number, number];
+      return;
+    }
+
+    console.log(
+      `[${modelId.slice(0,8)}] 📥 Syncing localPosition from prop:`,
+      'from:', lastApplied,
+      'to:', nextFromProps
+    );
+    commitLocalPosition(nextFromProps);
+  }, [position, isDragging, isPinching, isRotating, modelId]);
+  
+  
+  
+  useEffect(() => {
+    if (layoutEpoch == null) return;
+    const nextFromProps: [number, number, number] = [position[0], position[1], position[2]];
+    lastParentPropPositionRef.current = [...nextFromProps] as [number, number, number];
+
+    if (isDragging || isPinching || isRotating) {
+      pendingRefSyncRef.current = [...nextFromProps] as [number, number, number];
+      return;
+    }
+
+    if (!ref.current) {
+      pendingRefSyncRef.current = [...nextFromProps] as [number, number, number];
+      return;
+    }
+
+    const beforeSync = ref.current.position.toArray();
+    commitRefPosition(nextFromProps);
+    console.log(`[${modelId.slice(0,8)}] 🔄 SYNC #1 (layoutEpoch ${layoutEpoch}):`,
+      'from:', beforeSync, 'to:', nextFromProps);
+    
+  
+  }, [layoutEpoch, position, modelId]);
+
+  
+  useEffect(() => {
+    const nextFromProps: [number, number, number] = [position[0], position[1], position[2]];
+    const parentPrev = lastParentPropPositionRef.current;
+    const changed = !parentPrev || !arePositionsClose(parentPrev, nextFromProps);
+
+    if (!changed) return;
+
+    lastParentPropPositionRef.current = [...nextFromProps] as [number, number, number];
+
+    if (isDragging || isPinching || isRotating) {
+      pendingRefSyncRef.current = [...nextFromProps] as [number, number, number];
+      return;
+    }
+
+    if (!ref.current) {
+      pendingRefSyncRef.current = [...nextFromProps] as [number, number, number];
+      return;
+    }
+
+    const beforeSync = ref.current.position.toArray();
+    commitRefPosition(nextFromProps);
+    console.log(`[${modelId.slice(0,8)}] 🔄 SYNC #2 (position prop changed):`,
+      'from:', beforeSync, 'to:', nextFromProps);
+  
+  }, [position, modelId]);
+  
+
+  
   useEffect(() => {
     if (pivotRef.current && !isPinching && !isRotating) {
-      pivotRef.current.rotation.set(rotation[0], rotation[1], rotation[2]);
+      pivotRef.current.rotation.set(localRotation[0], localRotation[1], localRotation[2]);
     }
-  }, [rotation, isPinching, isRotating]);
+  }, [localRotation, isPinching, isRotating]);
 
-  // Вмикаємо можливість видалення через невеликий час після того, як модель стала обраною
+  
   useEffect(() => {
+    if (isDragging || isPinching || isRotating) return;
+
+    if (pendingLocalSyncRef.current) {
+      const next = pendingLocalSyncRef.current;
+      pendingLocalSyncRef.current = null;
+      console.log(`[${modelId.slice(0,8)}] 📥 Applying pending localPosition:`, next);
+      commitLocalPosition(next);
+    }
+
+    if (pendingRefSyncRef.current && ref.current) {
+      const next = pendingRefSyncRef.current;
+      pendingRefSyncRef.current = null;
+      const before = ref.current.position.toArray();
+      commitRefPosition(next);
+      console.log(`[${modelId.slice(0,8)}] 🔄 Applying pending ref sync:`, 'from:', before, 'to:', next);
+    }
+  }, [isDragging, isPinching, isRotating, modelId]);
+
+  
+  useEffect(() => {
+    console.log(`[${modelId.slice(0,8)}] 🎯 SELECTED CHANGED:`, selected, 
+      '\n  ref.pos:', ref.current?.position.toArray(), 
+      '\n  localPos:', localPosition, 
+      '\n  prop pos:', position);
+    
+    
+    dragEnableAtRef.current = Date.now() + 200;
+    
     if (selected) {
-      deleteEnableAtRef.current = Date.now() + 600; // 600ms grace period після вибору/створення
+      deleteEnableAtRef.current = Date.now() + 600; 
     } else {
       deleteEnableAtRef.current = 0;
     }
+    
+    
+    dragStartRef.current = null;
+    pendingDragRef.current = null;
+    dragActivatedRef.current = false;
+    lastDragPlaneRef.current = null;
+    setIsDragging(false);
+    setIsRotating(false);
   }, [selected]);
 
-  // Синхронізуємо scale імперативно (щоб не перетирати під час pinch)
+  
   useEffect(() => {
     if (pivotRef.current && !isPinching) {
-      pivotRef.current.scale.set(scale[0], scale[1], scale[2]);
+      pivotRef.current.scale.set(localScale[0], localScale[1], localScale[2]);
     }
-  }, [scale, isPinching]);
+  }, [localScale, isPinching]);
 
-  // Примітка: підсвічування матеріалів вимкнено, щоб уникнути конфліктів з різними типами матеріалів GLTF
+  
 
-  // Handle drag - ПОКРАЩЕНА АДАПТИВНА ЧУТЛИВІСТЬ
-  // Перетворення координат екрана у світову точку перетину з довільною площиною
+  
+  
   const getWorldPointOnPlane = (
     clientX: number,
     clientY: number,
     planeNormal: THREE.Vector3,
     planeConstant: number
   ): THREE.Vector3 | null => {
-    const rect = gl.domElement.getBoundingClientRect();
+    const rect = canvasRectRef.current ?? gl.domElement.getBoundingClientRect();
     const x = ((clientX - rect.left) / rect.width) * 2 - 1;
     const y = -((clientY - rect.top) / rect.height) * 2 + 1;
     raycasterRef.current.setFromCamera({ x, y } as any, camera);
-    const plane = new THREE.Plane().set(planeNormal, planeConstant);
+    dragPlaneRef.current.set(planeNormal, planeConstant);
     const out = tmpVec3Ref.current;
-    const hit = raycasterRef.current.ray.intersectPlane(plane, out);
+    const hit = raycasterRef.current.ray.intersectPlane(dragPlaneRef.current, out);
     return hit ? out.clone() : null;
   };
 
   const handlePointerDown = (e: any) => {
-    // Не починати новий жест під час активного pinch або rotation
-    if (isPinching || isRotating) {
-      e.stopPropagation();
+    
+    try { e.stopPropagation(); } catch {}
+    
+    
+    
+    if (activeGestureId && activeGestureId !== modelId) {
       return;
     }
-    // Якщо клік у зоні хрестика — готуємо видалення (підтвердження на pointerup)
+    
+    if (isPinching || isRotating) {
+      return;
+    }
+    
     if (selected && ref.current && Date.now() >= deleteEnableAtRef.current) {
       try {
-        // 1) Екранний хіт-тест у пікселях з точним радіусом по проекції
+        
         if (e && typeof e.clientX === 'number' && typeof e.clientY === 'number') {
           const delLocal = new THREE.Vector3(deleteBtnPosition[0], deleteBtnPosition[1], deleteBtnPosition[2]);
           const delWorld = ref.current.localToWorld(delLocal.clone());
@@ -228,31 +484,38 @@ function Model({ url, position, rotation, scale, selected, onUpdate, onSelect, o
           const dx = e.clientX - px;
           const dy = e.clientY - py;
           const distPx = Math.hypot(dx, dy);
-          // проєктуємо радіус кола у пікселі за допомогою напрямку "праворуч" від камери
+          
           const camRight = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion).normalize();
-          const scaleFactor = pivotRef.current ? pivotRef.current.scale.x : Math.max(scale[0], scale[1], scale[2]);
+          const scaleFactor = pivotRef.current ? pivotRef.current.scale.x : Math.max(localScale[0], localScale[1], localScale[2]);
           const worldRadius = deleteBtnRadius * scaleFactor;
           const edgeWorld = delWorld.clone().add(camRight.multiplyScalar(worldRadius));
           const edgeNdc = edgeWorld.clone().project(camera);
           const edgePx = ((edgeNdc.x + 1) / 2) * rect.width + rect.left;
           const edgePy = ((-edgeNdc.y + 1) / 2) * rect.height + rect.top;
           const pxRadius = Math.hypot(edgePx - px, edgePy - py);
-          const thresholdPx = pxRadius * 0.85; // трохи менше за видимий радіус
+          const thresholdPx = pxRadius * 0.85; 
           if (distPx <= thresholdPx) {
-            // Маркуємо як потенційне видалення, підтвердимо на pointerup
+            
             deletePressRef.current = { downX: e.clientX, downY: e.clientY, time: Date.now(), wasInside: true };
-            e.stopPropagation();
-            // поки не видаляємо тут — чекаємо pointerup
+            
             return;
           }
         }
       } catch {}
     }
 
-    // Якщо об'єкт ще не обрано — обираємо і одразу фокусуємось
+    
+    dragStartRef.current = null;
+    pendingDragRef.current = null;
+    dragActivatedRef.current = false;
+    dragEndingRef.current = false; 
+    
+    console.log(`[${modelId.slice(0,8)}] PointerDown - ref.pos:`, ref.current?.position.toArray(), 'local:', localPosition);
+
+    
     if (!selected) {
+      console.log(`[${modelId.slice(0,8)}] Not selected, only selecting (no drag yet)`);
       onSelect();
-      // Наводимо центр камери на центр моделі (центр pivot)
       try {
         if (pivotRef.current) {
           const wc = new THREE.Vector3();
@@ -260,10 +523,12 @@ function Model({ url, position, rotation, scale, selected, onUpdate, onSelect, o
           onFocusCenter?.([wc.x, wc.y, wc.z]);
         }
       } catch {}
+      
+      return;
     }
-    // CAMERA ON: тільки обертання навколо своєї осі (одним пальцем)
+    
     if (controlsEnabled) {
-      e.stopPropagation();
+      if (onGestureStart && !onGestureStart(modelId, 'rotate')) return;
       setIsRotating(true);
       if (pivotRef.current) {
         rotateStartYRef.current = pivotRef.current.rotation.y;
@@ -278,52 +543,106 @@ function Model({ url, position, rotation, scale, selected, onUpdate, onSelect, o
       if (e.target && typeof e.target.setPointerCapture === 'function' && e.pointerId != null) {
         try { e.target.setPointerCapture(e.pointerId); } catch {}
       }
-      try { invalidate(); } catch {}
+      
       return;
     }
 
-    // CAMERA OFF: тільки переміщення (drag)
-    e.stopPropagation();
+    
+    
+    if (Date.now() < dragEnableAtRef.current) {
+      console.log(`[${modelId.slice(0,8)}] Drag blocked by grace period`);
+      return;
+    }
+    
+    
+    if (ref.current) {
+      const refPosArr: [number, number, number] = [
+        ref.current.position.x,
+        ref.current.position.y,
+        ref.current.position.z
+      ];
+      const propPosArr: [number, number, number] = [position[0], position[1], position[2]];
+      const lastSynced = lastPropPositionForRefSyncRef.current;
+      const propsMatchLast = lastSynced ? arePositionsClose(propPosArr, lastSynced) : true;
+      const refMatchesProp = arePositionsClose(refPosArr, propPosArr);
+
+      if (!refMatchesProp && propsMatchLast) {
+        commitRefPosition(propPosArr);
+        console.log(`[${modelId.slice(0,8)}] 🔄 SYNC #3 (pre-drag):`,
+          'from:', refPosArr, 'to:', propPosArr);
+      }
+    }
+    
+    try { e.stopPropagation(); } catch {}
+  if (onGestureStart && !onGestureStart(modelId, 'drag')) return;
     setIsDragging(true);
+    
+    if (typeof e.pointerId === 'number') activeDragPointerIdRef.current = e.pointerId;
     if (e.target && typeof e.target.setPointerCapture === 'function' && e.pointerId != null) {
       try { e.target.setPointerCapture(e.pointerId); } catch {}
     }
 
-    // Зберігаємо початкову точку дотику і початкову позицію об'єкта
-    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
-
-    // Pinch вимкнено — не ініціюємо
     
-    // Визначаємо площину drag, перпендикулярну напрямку камери і
-    // що проходить через поточну позицію об'єкта (екрано-орієнтована площина).
-    const objPos = ref.current
-      ? ref.current.position.clone()
-      : new THREE.Vector3(position[0], position[1], position[2]);
-    const normal = new THREE.Vector3();
-    camera.getWorldDirection(normal); // напрямок, куди дивиться камера
-    // Площина повинна бути перпендикулярна до цього напрямку і проходити через objPos
-    const planeConst = -normal.dot(objPos);
+  const clientX = e.clientX;
+  const clientY = e.clientY;
 
-    // Обчислюємо точку під пальцем на цій площині
-    const worldDown = getWorldPointOnPlane(clientX, clientY, normal, planeConst);
+    
+    
+  
+  try { canvasRectRef.current = gl.domElement.getBoundingClientRect(); } catch { canvasRectRef.current = null; }
+
+  
+    
+    
+    const objPos = ref.current ? ref.current.position.clone() : new THREE.Vector3(localPosition[0], localPosition[1], localPosition[2]);
+    console.log(`[${modelId.slice(0,8)}] Starting direct drag - objPos:`, objPos.toArray(), 'ref exists:', !!ref.current);
+    
+    const prevDragPlane = lastDragPlaneRef.current;
+    let normal = new THREE.Vector3(0, 1, 0);
+    
+    let planeConst = -normal.dot(objPos);
+    let worldDown = getWorldPointOnPlane(clientX, clientY, normal, planeConst);
+    if (!worldDown && prevDragPlane) {
+      normal = prevDragPlane.normal.clone();
+      planeConst = -normal.dot(objPos);
+      worldDown = getWorldPointOnPlane(clientX, clientY, normal, planeConst);
+    }
+    if (!worldDown) {
+      const fallback = new THREE.Vector3();
+      camera.getWorldDirection(fallback);
+      planeConst = -fallback.dot(objPos);
+      worldDown = getWorldPointOnPlane(clientX, clientY, fallback, planeConst);
+      if (worldDown) normal = fallback.clone();
+    }
+    
     const offset = worldDown ? objPos.clone().sub(worldDown) : new THREE.Vector3(0, 0, 0);
     
     dragStartRef.current = {
+      modelId: modelId,
       x: clientX,
       y: clientY,
-      objStart: objPos,
+      objStart: objPos.clone(),
       planeNormal: normal.clone(),
       planeConstant: planeConst,
-      offset
+      offset: offset.clone()
     };
+    lastDragPlaneRef.current = {
+      normal: normal.clone(),
+      point: objPos.clone(),
+    };
+    console.log(`[${modelId.slice(0,8)}] Direct drag created, offset:`, offset.toArray().map(v => v.toFixed(2)));
+    dragActivatedRef.current = false;
     
     lastPointerPosRef.current = { x: clientX, y: clientY };
     lastMoveTimeRef.current = Date.now();
   };
 
   const handlePointerMove = (e: any) => {
-    // CAMERA ON: обертання по горизонтальному зсуву
+    
+    try { e.stopPropagation(); } catch {}
+    
+    
+    
     if (isRotating && pivotRef.current) {
       const clientX = e.touches ? e.touches[0]?.clientX ?? e.clientX : e.clientX;
       const clientY = e.touches ? e.touches[0]?.clientY ?? e.clientY : e.clientY;
@@ -331,20 +650,20 @@ function Model({ url, position, rotation, scale, selected, onUpdate, onSelect, o
       if (last) {
         const dx = clientX - last.x;
         const dy = clientY - last.y;
-        const ROT_PER_PX_X = 0.01; // pitch
-        const ROT_PER_PX_Y = 0.01; // yaw
-        // Оновлюємо цілі кути
+        const ROT_PER_PX_X = 0.01; 
+        const ROT_PER_PX_Y = 0.01; 
+        
         rotateTargetRef.current.y += dx * ROT_PER_PX_Y;
-        rotateTargetRef.current.x += -dy * ROT_PER_PX_X; // рух вгору -> позитивний pitch
-        // Обмежимо pitch, щоб не перевертати об'єкт
-        const maxPitch = Math.PI / 3; // ~60°
+        rotateTargetRef.current.x += -dy * ROT_PER_PX_X; 
+        
+        const maxPitch = Math.PI / 3; 
         rotateTargetRef.current.x = Math.max(-maxPitch, Math.min(maxPitch, rotateTargetRef.current.x));
-        try { invalidate(); } catch {}
+        
       }
       lastPointerPosRef.current = { x: clientX, y: clientY };
       return;
     }
-    // Pointer Events pinch: оновлюємо координати по кожному pointer
+    
     if (isPinching && e.pointerId != null) {
       const clientX = e.touches ? e.touches[0]?.clientX ?? e.clientX : e.clientX;
       const clientY = e.touches ? e.touches[0]?.clientY ?? e.clientY : e.clientY;
@@ -352,7 +671,7 @@ function Model({ url, position, rotation, scale, selected, onUpdate, onSelect, o
         pointersRef.current.set(e.pointerId, { x: clientX, y: clientY });
       }
       if (pointersRef.current.size >= 2 && pinchRef.current) {
-        // стабільний порядок за pointerId
+        
         const arr = Array.from(pointersRef.current.entries())
           .sort((a, b) => a[0] - b[0])
           .map(([, v]) => v);
@@ -360,20 +679,20 @@ function Model({ url, position, rotation, scale, selected, onUpdate, onSelect, o
         const dy = arr[1].y - arr[0].y;
         const newDist = Math.hypot(dx, dy);
         const newAngle = Math.atan2(dy, dx);
-        // Оновлюємо останні виміри
+        
   const prev = pinchRef.current.prevDistance ?? newDist;
   pinchRef.current.prevDistance = pinchRef.current.lastDistance ?? newDist;
   pinchRef.current.prevAngle = pinchRef.current.lastAngle ?? newAngle;
   pinchRef.current.lastDistance = newDist;
   pinchRef.current.lastAngle = newAngle;
-        // Негайне застосування: обчислюємо і ставимо трансформації одразу, без очікування кадру
+        
         if (ref.current) {
           const SENS = 8.4;
           const dead = 0.00025;
           const minS = 0.1;
           const maxS = 3;
           const pr = pinchRef.current;
-          // Масштаб: легка екстраполяція; для обертання — тільки інкремент без прогнозу
+          
           const dv = pr.lastDistance - (prev ?? pr.lastDistance);
           const predicted = pr.lastDistance + dv * 1.2;
           const rawFactor = predicted / pr.initialDistance;
@@ -384,9 +703,9 @@ function Model({ url, position, rotation, scale, selected, onUpdate, onSelect, o
           pr.targetScale = desiredScale;
           if (pivotRef.current) {
             pivotRef.current.scale.setScalar(desiredScale);
-            // Інкрементальний поворот навколо ВЛАСНОЇ осі Y (локальної)
+            
             let d = (pr.lastAngle ?? newAngle) - (pr.prevAngle ?? newAngle);
-            // нормалізація кута до [-PI, PI]
+            
             const PI2 = Math.PI * 2;
             while (d > Math.PI) d -= PI2;
             while (d < -Math.PI) d += PI2;
@@ -395,30 +714,103 @@ function Model({ url, position, rotation, scale, selected, onUpdate, onSelect, o
             pr.targetRotY = pivotRef.current.rotation.y;
           }
         }
-        try { invalidate(); } catch {}
+        
       }
       return;
     }
-  if (isPinching || controlsEnabled) return; // у CAMERA ON переміщення вимкнено
-    // Рухаємося, щойно почали drag, навіть якщо selected ще не встиг оновитись у батька
-    if (!isDragging || !dragStartRef.current) return;
+  if (isPinching || controlsEnabled) return; 
+    
+    if (activeGestureId && activeGestureId !== modelId) return;
+    
+    if (!isDragging && !pendingDragRef.current) return;
 
-    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    
+    if (activeDragPointerIdRef.current != null && typeof e.pointerId === 'number' && e.pointerId !== activeDragPointerIdRef.current) {
+      return;
+    }
+
+    
+    let clientX = e.clientX;
+    let clientY = e.clientY;
+    try {
+      const ces = (e as PointerEvent).getCoalescedEvents?.();
+      if (ces && ces.length) {
+        const last = ces[ces.length - 1];
+        if (typeof last.clientX === 'number' && typeof last.clientY === 'number') {
+          clientX = last.clientX;
+          clientY = last.clientY;
+        }
+      }
+    } catch {}
 
     lastPointerPosRef.current = { x: clientX, y: clientY };
     lastMoveTimeRef.current = Date.now();
+
+    
+    if (!isDragging && pendingDragRef.current) {
+      
+      if (pendingDragRef.current.modelId !== modelId) {
+        console.warn(`[Model ${modelId}] Ignoring pending drag from different model ${pendingDragRef.current.modelId}`);
+        pendingDragRef.current = null;
+        return;
+      }
+      const dx0 = clientX - pendingDragRef.current.x;
+      const dy0 = clientY - pendingDragRef.current.y;
+      if (Math.hypot(dx0, dy0) >= DRAG_THRESHOLD_PX) {
+        if (onGestureStart && !onGestureStart(modelId, 'drag')) return;
+        setIsDragging(true);
+        dragStartRef.current = { ...pendingDragRef.current } as any;
+        pendingDragRef.current = null;
+        if (dragStartRef.current) {
+          lastDragPlaneRef.current = {
+            normal: dragStartRef.current.planeNormal.clone(),
+            point: dragStartRef.current.objStart.clone(),
+          };
+        }
+        if (typeof e.pointerId === 'number') activeDragPointerIdRef.current = e.pointerId;
+      } else {
+        return;
+      }
+    }
+
+    
+    if (ref.current && dragStartRef.current) {
+      
+      if (dragStartRef.current.modelId !== modelId) {
+        console.warn(`[Model ${modelId}] Ignoring drag from different model ${dragStartRef.current.modelId}`);
+        return;
+      }
+      
+      const dx = clientX - dragStartRef.current.x;
+      const dy = clientY - dragStartRef.current.y;
+      const dist = Math.hypot(dx, dy);
+      if (!dragActivatedRef.current && dist < DRAG_THRESHOLD_PX) {
+        return;
+      }
+      dragActivatedRef.current = true;
+      const world = getWorldPointOnPlane(
+        clientX,
+        clientY,
+        dragStartRef.current.planeNormal,
+        dragStartRef.current.planeConstant
+      );
+      if (world) {
+        const pos = world.clone().add(dragStartRef.current.offset);
+        ref.current.position.set(pos.x, pos.y, pos.z);
+        try { invalidate(); } catch {}
+      }
+    }
   };
 
   const handlePointerUp = (e?: any) => {
-    // Підтвердження можливого видалення по кліку (без значного руху і швидко)
+    
     if (deletePressRef.current && e && typeof e.clientX === 'number' && typeof e.clientY === 'number') {
       const press = deletePressRef.current;
       deletePressRef.current = null;
       const moved = Math.hypot(e.clientX - press.downX, e.clientY - press.downY);
       const quick = Date.now() - press.time < 500;
       if (press.wasInside && moved <= 10 && quick && selected && ref.current && Date.now() >= deleteEnableAtRef.current) {
-        // Повторно звіримо, що ми досі всередині екраної кнопки (на випадок масштабів/рухів)
+        
         try {
           const delLocal = new THREE.Vector3(deleteBtnPosition[0], deleteBtnPosition[1], deleteBtnPosition[2]);
           const delWorld = ref.current.localToWorld(delLocal.clone());
@@ -430,7 +822,7 @@ function Model({ url, position, rotation, scale, selected, onUpdate, onSelect, o
           const dy = e.clientY - py;
           const distPx = Math.hypot(dx, dy);
           const camRight = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion).normalize();
-          const scaleFactor = pivotRef.current ? pivotRef.current.scale.x : Math.max(scale[0], scale[1], scale[2]);
+          const scaleFactor = pivotRef.current ? pivotRef.current.scale.x : Math.max(localScale[0], localScale[1], localScale[2]);
           const worldRadius = deleteBtnRadius * scaleFactor;
           const edgeWorld = delWorld.clone().add(camRight.multiplyScalar(worldRadius));
           const edgeNdc = edgeWorld.clone().project(camera);
@@ -445,77 +837,128 @@ function Model({ url, position, rotation, scale, selected, onUpdate, onSelect, o
         } catch {}
       }
     }
-    // Завершення обертання
+    
     if (isRotating) {
       if (pivotRef.current) {
         const ry = pivotRef.current.rotation.y;
-        onUpdate({ rotation: [rotation[0], ry, rotation[2]] });
+        const newRotation: [number, number, number] = [localRotation[0], ry, localRotation[2]];
+        setLocalRotation(newRotation);
+        onUpdate({ rotation: newRotation });
       }
       setIsRotating(false);
+      try { onGestureEnd?.(modelId, 'rotate'); } catch {}
+      lastGestureEndTimeRef.current = Date.now();
       lastPointerPosRef.current = null;
       return;
     }
-    // Прибраємо pointer з карти
+    
     if (e && e.pointerId != null) {
       pointersRef.current.delete(e.pointerId);
     }
-    // Якщо був pinch і залишився <2 pointers — коміт і завершення pinch
+  
     if (isPinching) {
       if (pivotRef.current) {
         const s = pivotRef.current.scale.x;
         const ry = pivotRef.current.rotation.y;
-        onUpdate({ scale: [s, s, s], rotation: [rotation[0], ry, rotation[2]] });
+        const newScale: [number, number, number] = [s, s, s];
+        const newRotation: [number, number, number] = [localRotation[0], ry, localRotation[2]];
+        setLocalScale(newScale);
+        setLocalRotation(newRotation);
+        onUpdate({ scale: newScale, rotation: newRotation });
       }
       setIsPinching(false);
       pinchRef.current = null;
       try { onPinchActiveChange?.(false); } catch {}
+      try { onGestureEnd?.(modelId, 'pinch'); } catch {}
+      lastGestureEndTimeRef.current = Date.now();
       return;
     }
-    // Фінал для drag
-    if (ref.current) {
-      const finalPos = ref.current.position;
-      onUpdate({ position: [finalPos.x, finalPos.y, finalPos.z] });
-    }
-    setIsDragging(false);
-    dragStartRef.current = null;
-    lastPointerPosRef.current = null;
-    if (animationFrameRef.current) {
-      cancelAnimationFrame(animationFrameRef.current);
-      animationFrameRef.current = null;
-    }
-  };
-
-  // Плавне оновлення позиції під час drag кожен кадр
-  useFrame((_, delta) => {
-    // Drag оновлення
-    if (isDragging && dragStartRef.current && ref.current) {
-      const lp = lastPointerPosRef.current;
-      if (lp) {
-        const world = getWorldPointOnPlane(
-          lp.x,
-          lp.y,
-          dragStartRef.current.planeNormal,
-          dragStartRef.current.planeConstant
-        );
-        if (world) {
-          const pos = world.clone().add(dragStartRef.current.offset);
-          ref.current.position.set(pos.x, pos.y, pos.z);
-          invalidate();
+    
+    if (isDragging) {
+      
+      if (dragEndingRef.current) {
+        console.log(`[${modelId.slice(0,8)}] Ignoring duplicate pointerUp`);
+        return;
+      }
+      
+      const isSamePointer = (e && typeof e.pointerId === 'number')
+        ? (activeDragPointerIdRef.current == null || e.pointerId === activeDragPointerIdRef.current)
+        : true;
+      if (isSamePointer) {
+        
+        dragEndingRef.current = true;
+        
+        const endPlane = dragStartRef.current
+          ? {
+              normal: dragStartRef.current.planeNormal.clone(),
+              point: (ref.current ? ref.current.position.clone() : dragStartRef.current.objStart.clone()),
+            }
+          : null;
+        
+        setIsDragging(false);
+        try { onGestureEnd?.(modelId, 'drag'); } catch {}
+        lastGestureEndTimeRef.current = Date.now();
+        activeDragPointerIdRef.current = null;
+        dragStartRef.current = null;
+        dragActivatedRef.current = false;
+        lastPointerPosRef.current = null;
+        
+        
+        if (ref.current) {
+          const finalPos = ref.current.position;
+          const newPosition: [number, number, number] = [finalPos.x, finalPos.y, finalPos.z];
+          console.log(`[${modelId.slice(0,8)}] Drag ended, saving position:`, newPosition);
+          commitLocalPosition(newPosition);
+          onUpdate({ position: newPosition });
+          lastPropPositionForRefSyncRef.current = [...newPosition] as [number, number, number];
+          if (endPlane) {
+            lastDragPlaneRef.current = endPlane;
+          } else {
+            lastDragPlaneRef.current = {
+              normal: new THREE.Vector3(0, 1, 0),
+              point: finalPos.clone(),
+            };
+          }
         }
+        
+        if (animationFrameRef.current) {
+          cancelAnimationFrame(animationFrameRef.current);
+          animationFrameRef.current = null;
+        }
+        
+        canvasRectRef.current = null;
+        
+        
+        setTimeout(() => {
+          dragEndingRef.current = false;
+        }, 100);
       }
     }
+    
+    pendingDragRef.current = null;
+    dragActivatedRef.current = false;
+  };
 
-    // Pinch оновлення — максимально "живе": застосовуємо цільові значення одразу кожен кадр
+  
+  useFrame((_, delta) => {
+    let needsInvalidate = false;
+    
+    
+    
+    
+    
+
+    
     if (isPinching && pinchRef.current && ref.current) {
       const pr = pinchRef.current;
-      // Якщо з pointermove вже пораховані targetScale/targetRotY — просто застосовуємо
+      
       if (Number.isFinite(pr.targetScale) && Number.isFinite(pr.targetRotY)) {
         if (pivotRef.current) {
           pivotRef.current.scale.setScalar(pr.targetScale);
-          // rotation вже застосовано інкрементально у pointermove
+          
         }
       } else {
-        // fallback: швидкий прямий перерахунок без згладжування
+        
         const SENS = 8.4;
         const dead = 0.00025;
         const minS = 0.1;
@@ -531,7 +974,7 @@ function Model({ url, position, rotation, scale, selected, onUpdate, onSelect, o
         pr.targetScale = desiredScale;
         if (pivotRef.current) {
           pivotRef.current.scale.setScalar(desiredScale);
-          // Інкрементальний поворот на різницю кутів у fallback
+          
           if (pr.prevAngle != null && pr.lastAngle != null) {
             let dAng = pr.lastAngle - pr.prevAngle;
             const PI2 = Math.PI * 2;
@@ -543,24 +986,29 @@ function Model({ url, position, rotation, scale, selected, onUpdate, onSelect, o
         }
       }
 
-      invalidate();
+      needsInvalidate = true;
     }
 
-    // CAMERA ON: плавне обертання до цільових кутів (м'яке згладжування)
+    
     if (isRotating && pivotRef.current) {
-      // експоненційне згладжування, стабільне до FPS
-      const k = 12; // швидкість сходження
+      if (activeGestureId && activeGestureId !== modelId) {
+        
+      } else {
+      
+      const k = 12; 
       const s = 1 - Math.exp(-k * Math.max(0.001, delta));
-      // оновлюємо поточні значення до цілей
+      
       rotateCurrentRef.current.x += (rotateTargetRef.current.x - rotateCurrentRef.current.x) * s;
       rotateCurrentRef.current.y += (rotateTargetRef.current.y - rotateCurrentRef.current.y) * s;
-      // застосовуємо до pivot
+      
       pivotRef.current.rotation.set(rotateCurrentRef.current.x, rotateCurrentRef.current.y, 0);
-      invalidate();
+      needsInvalidate = true;
+      }
     }
+    if (needsInvalidate) invalidate();
   });
 
-  // Тимчасово зменшуємо DPR під час активного drag/pinch для підвищення FPS
+  
   const savedDprRef = useRef<number | null>(null);
   useEffect(() => {
     try {
@@ -574,7 +1022,7 @@ function Model({ url, position, rotation, scale, selected, onUpdate, onSelect, o
     } catch {}
   }, [isDragging, isPinching, isRotating, gl]);
 
-  // Глобальний страховий ресет на випадок загубленого pointerup/touchend
+  
   useEffect(() => {
     const onAnyUp = () => {
       if (isDragging) {
@@ -582,11 +1030,15 @@ function Model({ url, position, rotation, scale, selected, onUpdate, onSelect, o
       } else if (isRotating) {
         handlePointerUp();
       } else if (isPinching) {
-        // Коміт pinch і скидання
+        
         if (pivotRef.current) {
           const s = pivotRef.current.scale.x;
           const ry = pivotRef.current.rotation.y;
-          onUpdate({ scale: [s, s, s], rotation: [rotation[0], ry, rotation[2]] });
+          const newScale: [number, number, number] = [s, s, s];
+          const newRotation: [number, number, number] = [localRotation[0], ry, localRotation[2]];
+          setLocalScale(newScale);
+          setLocalRotation(newRotation);
+          onUpdate({ scale: newScale, rotation: newRotation });
         }
         setIsPinching(false);
         pinchRef.current = null;
@@ -606,10 +1058,10 @@ function Model({ url, position, rotation, scale, selected, onUpdate, onSelect, o
     };
   }, [isDragging, isPinching, isRotating, onUpdate, rotation]);
 
-  // Ресет жести при зміні складу layout (додавання/видалення)
+  
   useEffect(() => {
     if (layoutEpoch == null) return;
-    // Безпечне завершення активних жестів і очищення вказівників
+    
     if (isDragging) {
       handlePointerUp();
     }
@@ -617,7 +1069,11 @@ function Model({ url, position, rotation, scale, selected, onUpdate, onSelect, o
       if (pivotRef.current) {
         const s = pivotRef.current.scale.x;
         const ry = pivotRef.current.rotation.y;
-        onUpdate({ scale: [s, s, s], rotation: [rotation[0], ry, rotation[2]] });
+        const newScale: [number, number, number] = [s, s, s];
+        const newRotation: [number, number, number] = [localRotation[0], ry, localRotation[2]];
+        setLocalScale(newScale);
+        setLocalRotation(newRotation);
+        onUpdate({ scale: newScale, rotation: newRotation });
       }
       setIsPinching(false);
       pinchRef.current = null;
@@ -626,18 +1082,22 @@ function Model({ url, position, rotation, scale, selected, onUpdate, onSelect, o
     pointersRef.current.clear();
   }, [layoutEpoch]);
 
-  // Якщо вмикаються OrbitControls, коректно завершуємо drag, щоб не було "стрибків" або зникнення
+  
   useEffect(() => {
     if (!controlsEnabled) return;
     if (isDragging) {
       handlePointerUp();
     }
     if (isPinching) {
-      // Коміт масштабу/обертання і вихід з pinch
-      if (ref.current) {
-        const s = ref.current.scale.x;
-        const ry = ref.current.rotation.y;
-        onUpdate({ scale: [s, s, s], rotation: [rotation[0], ry, rotation[2]] });
+      
+      if (pivotRef.current) {
+        const s = pivotRef.current.scale.x;
+        const ry = pivotRef.current.rotation.y;
+        const newScale: [number, number, number] = [s, s, s];
+        const newRotation: [number, number, number] = [localRotation[0], ry, localRotation[2]];
+        setLocalScale(newScale);
+        setLocalRotation(newRotation);
+        onUpdate({ scale: newScale, rotation: newRotation });
       }
       setIsPinching(false);
       pinchRef.current = null;
@@ -645,69 +1105,89 @@ function Model({ url, position, rotation, scale, selected, onUpdate, onSelect, o
     }
   }, [controlsEnabled]);
 
-  // Handle gestures using wheel for scale (desktop) and touch events will be handled via DOM
+  
   useEffect(() => {
-    // Вимикаємо масштабування колесом у всіх режимах
+    
     return;
   }, [selected, scale, onUpdate, gl, controlsEnabled]);
 
-  // НОВИЙ: Глобальний слухач для drag - модель слідує за пальцем завжди
+  
   useEffect(() => {
-    // Під час drag слухаємо глобальні події, не залежачи від selected
+    
     if (!isDragging) return;
 
     const canvas = gl.domElement;
 
-    const handleGlobalMove = (e: TouchEvent | PointerEvent) => {
+    const handleGlobalMove = (e: PointerEvent) => {
+      
+      if (activeGestureId && activeGestureId !== modelId) return;
       if (!dragStartRef.current) return;
+      
+      if (activeDragPointerIdRef.current != null && typeof (e as any).pointerId === 'number') {
+        if ((e as any).pointerId !== activeDragPointerIdRef.current) return;
+      }
 
-      const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
-      const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
+      
+      let clientX = e.clientX;
+      let clientY = e.clientY;
+      try {
+        const ces = e.getCoalescedEvents?.();
+        if (ces && ces.length) {
+          const last = ces[ces.length - 1];
+          if (typeof last.clientX === 'number' && typeof last.clientY === 'number') {
+            clientX = last.clientX;
+            clientY = last.clientY;
+          }
+        }
+      } catch {}
 
       lastPointerPosRef.current = { x: clientX, y: clientY };
       lastMoveTimeRef.current = Date.now();
-    };
 
-    const handleGlobalEnd = () => {
-      // Фінальне оновлення state
-      if (ref.current) {
-        const finalPos = ref.current.position;
-        onUpdate({ position: [finalPos.x, finalPos.y, finalPos.z] });
-      }
       
-      // Очищення
-      setIsDragging(false);
-      dragStartRef.current = null;
-      lastPointerPosRef.current = null;
+      if (ref.current && dragStartRef.current) {
+        
+        if (dragStartRef.current.modelId !== modelId) {
+          console.warn(`[Global Move Model ${modelId}] Ignoring drag from different model ${dragStartRef.current.modelId}`);
+          return;
+        }
+        const dx = clientX - dragStartRef.current.x;
+        const dy = clientY - dragStartRef.current.y;
+        const dist = Math.hypot(dx, dy);
+        if (!dragActivatedRef.current && dist < DRAG_THRESHOLD_PX) {
+          return;
+        }
+        dragActivatedRef.current = true;
+        const world = getWorldPointOnPlane(
+          clientX,
+          clientY,
+          dragStartRef.current.planeNormal,
+          dragStartRef.current.planeConstant
+        );
+        if (world) {
+          const pos = world.clone().add(dragStartRef.current.offset);
+          ref.current.position.set(pos.x, pos.y, pos.z);
+          try { invalidate(); } catch {}
+        }
+      }
     };
 
-    // Слухаємо на всьому canvas і document
-    canvas.addEventListener('touchmove', handleGlobalMove as any, { passive: true });
-    canvas.addEventListener('pointermove', handleGlobalMove as any, { passive: true });
-    document.addEventListener('touchmove', handleGlobalMove as any, { passive: true });
-    document.addEventListener('pointermove', handleGlobalMove as any, { passive: true });
     
-    canvas.addEventListener('touchend', handleGlobalEnd);
-    canvas.addEventListener('pointerup', handleGlobalEnd);
-    document.addEventListener('touchend', handleGlobalEnd);
-    document.addEventListener('pointerup', handleGlobalEnd);
+    const onRaw = (e: Event) => handleGlobalMove(e as PointerEvent);
+    canvas.addEventListener('pointermove', handleGlobalMove as any, { passive: true });
+    (canvas as any).addEventListener?.('pointerrawupdate', onRaw, { passive: true });
+    document.addEventListener('pointermove', handleGlobalMove as any, { passive: true });
 
     return () => {
-      canvas.removeEventListener('touchmove', handleGlobalMove as any);
       canvas.removeEventListener('pointermove', handleGlobalMove as any);
-      document.removeEventListener('touchmove', handleGlobalMove as any);
+      (canvas as any).removeEventListener?.('pointerrawupdate', onRaw as any);
       document.removeEventListener('pointermove', handleGlobalMove as any);
-      
-      canvas.removeEventListener('touchend', handleGlobalEnd);
-      canvas.removeEventListener('pointerup', handleGlobalEnd);
-      document.removeEventListener('touchend', handleGlobalEnd);
-      document.removeEventListener('pointerup', handleGlobalEnd);
     };
-  }, [isDragging, position, onUpdate, gl]);
+  }, [isDragging, onUpdate, gl, modelId, activeGestureId]);
 
-  // Видалено дублювання pinch на Touch Events — тепер тільки Pointer Events
+  
 
-  // Додаткові глобальні Pointer Events під час pinch для високої частоти оновлень
+  
   useEffect(() => {
     if (!isPinching) return;
     const canvas = gl.domElement;
@@ -733,7 +1213,7 @@ function Model({ url, position, rotation, scale, selected, onUpdate, onSelect, o
     };
   }, [isPinching, gl, handlePointerMove, handlePointerUp]);
 
-  // Додаткові глобальні Pointer Events під час rotation (CAMERA ON) для максимальної частоти оновлень
+  
   useEffect(() => {
     if (!isRotating) return;
     const canvas = gl.domElement;
@@ -759,8 +1239,19 @@ function Model({ url, position, rotation, scale, selected, onUpdate, onSelect, o
     };
   }, [isRotating, gl, handlePointerMove, handlePointerUp]);
 
-  // Обчислення позиції та розміру 3D кнопки видалення (заміна Html-оверлею)
-  // Позиція кнопки відносно pivot (центр = 0,0,0)
+  
+  useEffect(() => {
+    if (!activeGestureId) return;
+    if (activeGestureId !== modelId) {
+      if (isDragging || isRotating || isPinching) {
+        
+        try { handlePointerUp(); } catch {}
+      }
+    }
+  }, [activeGestureId]);
+
+  
+  
   const deleteBtnPosition: [number, number, number] = [
     bboxSizeRef.current.x / 2 + Math.max(0.03, Math.min(0.12, bboxSizeRef.current.x * 0.15)),
     bboxSizeRef.current.y / 2 + Math.max(0.03, Math.min(0.15, bboxSizeRef.current.y * 0.1)),
@@ -768,14 +1259,14 @@ function Model({ url, position, rotation, scale, selected, onUpdate, onSelect, o
   ];
   const deleteBtnRadius = Math.max(0.05, Math.min(0.14, Math.max(bboxSizeRef.current.x, bboxSizeRef.current.y) * 0.12));
 
-  // Позиція та розміри 3D підказки (label) про керування, коли об'єкт обрано
-  // Примітка: 3D текст тимчасово не використовуємо, щоб уникнути конфлікту версій; за потреби замінимо на CanvasTexture пізніше
+  
+  
 
   return (
     <group
       ref={ref}
-      // Позицію/обертання/масштаб тепер керуємо імперативно через ref,
-      // щоб React-пропси не перетирали оновлення під час жестів
+      
+      
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
@@ -783,9 +1274,9 @@ function Model({ url, position, rotation, scale, selected, onUpdate, onSelect, o
       onPointerLeave={handlePointerUp}
       dispose={null}
     >
-      {/* Вісь обертання у центрі bbox */}
+      {}
       <group ref={pivotRef}>
-        {/* Невидима збільшена зона торкання навколо моделі (у координатах pivot) */}
+        {}
         {hitGeomRef.current && (
           <mesh
             position={[hitCenterRef.current.x, hitCenterRef.current.y, hitCenterRef.current.z]}
@@ -797,10 +1288,10 @@ function Model({ url, position, rotation, scale, selected, onUpdate, onSelect, o
             onPointerUp={handlePointerUp}
             onPointerCancel={handlePointerUp}
           >
-            <meshBasicMaterial color="#000000" transparent opacity={0} depthWrite={false} />
+            <meshBasicMaterial color="#000000" transparent opacity={0} depthWrite={false} colorWrite={false} />
           </mesh>
         )}
-        {/* 3D кнопка видалення, кріпиться до pivot, щоб обертатись разом з моделлю */}
+        {}
         {selected && (
           <Billboard position={deleteBtnPosition} follow>
             <group
@@ -824,7 +1315,7 @@ function Model({ url, position, rotation, scale, selected, onUpdate, onSelect, o
             </group>
           </Billboard>
         )}
-        {/* Вміст моделі зсунений так, щоб pivot був у центрі */}
+        {}
         <group ref={contentRef}>
           <primitive
             object={clonedScene}
@@ -840,10 +1331,28 @@ function Model({ url, position, rotation, scale, selected, onUpdate, onSelect, o
   );
 }
 
-// Мемоізуємо модель, щоб не перевідмальовувати зайвий раз, коли не змінювались її пропси
-const MemoModel = React.memo(Model);
 
-// Компонент попереднього завантаження GLTF (з поточного layout та бібліотеки)
+const MemoModel = React.memo(Model, (prevProps, nextProps) => {
+  
+  if (prevProps.modelId !== nextProps.modelId) return false;
+  if (prevProps.selected !== nextProps.selected) return false;
+  if (prevProps.controlsEnabled !== nextProps.controlsEnabled) return false;
+  
+  
+  
+  if (prevProps.activeGestureId !== nextProps.activeGestureId) return false;
+  if (prevProps.url !== nextProps.url) return false;
+  
+  
+  const posChanged = prevProps.position.some((v, i) => Math.abs(v - nextProps.position[i]) > 0.0001);
+  const rotChanged = prevProps.rotation.some((v, i) => Math.abs(v - nextProps.rotation[i]) > 0.0001);
+  const scaleChanged = prevProps.scale.some((v, i) => Math.abs(v - nextProps.scale[i]) > 0.0001);
+  
+  
+  return !posChanged && !rotChanged && !scaleChanged;
+});
+
+
 const PreloadModels: React.FC<{ urls: string[] }> = ({ urls }) => {
   useEffect(() => {
     const set = new Set<string>(urls);
@@ -861,17 +1370,70 @@ const PreloadModels: React.FC<{ urls: string[] }> = ({ urls }) => {
   return null;
 };
 
-const Overlay3D: React.FC<Overlay3DProps> = ({ mode }) => {
+const Overlay3D: React.FC<Overlay3DProps> = ({ mode, layout, onLayoutChange }) => {
   const [videoStream, setVideoStream] = useState<MediaStream | null>(null);
   const [video, setVideo] = useState<HTMLVideoElement | null>(null);
-  const [layout, setLayout] = useState<any[]>([]);
+  const [models, setModels] = useState<ModelData[]>(layout);
   const [layoutEpoch, setLayoutEpoch] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [activeGestureId, setActiveGestureId] = useState<string | null>(null);
   const [cameraControlEnabled, setCameraControlEnabled] = useState(false);
   const controlsRef = useRef<any>(null);
   const lastCentersRef = useRef<Map<string, [number, number, number]>>(new Map());
   const [pinchingIds, setPinchingIds] = useState<Set<string>>(new Set());
-  // isolation mode видалено
+  const lastLayoutRef = useRef<ModelData[] | null>(null);
+  const pendingNotifyRef = useRef<ModelData[] | null>(null);
+  const hasMountedRef = useRef(false);
+  const layoutStructureRef = useRef<string>("");
+
+  const computeStructureSignature = React.useCallback((items: ModelData[]) => {
+    return items.map((m) => m.id).sort().join("|");
+  }, []);
+
+  const updateModels = React.useCallback((updater: (prev: ModelData[]) => ModelData[]) => {
+    let computed: ModelData[] = [];
+    setModels((prev) => {
+      const next = updater(prev);
+      computed = next;
+      pendingNotifyRef.current = next === prev ? null : next;
+      return next;
+    });
+    return computed;
+  }, []);
+
+  useEffect(() => {
+    if (!hasMountedRef.current) {
+      hasMountedRef.current = true;
+      pendingNotifyRef.current = null;
+      return;
+    }
+    if (pendingNotifyRef.current) {
+      onLayoutChange(pendingNotifyRef.current);
+      pendingNotifyRef.current = null;
+    }
+  }, [models, onLayoutChange]);
+  
+  
+
+  useEffect(() => {
+    if (lastLayoutRef.current === layout) return;
+    lastLayoutRef.current = layout;
+    setModels(layout);
+
+    const structureSignature = Array.isArray(layout)
+      ? computeStructureSignature(layout)
+      : "";
+    const prevSignature = layoutStructureRef.current;
+    layoutStructureRef.current = structureSignature;
+    if (prevSignature !== structureSignature) {
+      setLayoutEpoch((e) => e + 1);
+    }
+
+    setSelectedId((prev) => {
+      if (!prev) return null;
+      return layout.some((m) => m.id === prev) ? prev : null;
+    });
+  }, [layout, computeStructureSignature]);
 
   useEffect(() => {
     if (mode === "mobile") {
@@ -894,7 +1456,7 @@ const Overlay3D: React.FC<Overlay3DProps> = ({ mode }) => {
           
           const videoEl = document.getElementById("video-bg") as HTMLVideoElement;
           if (videoEl && isMounted) {
-            // Очищаємо попередній стрім
+            
             if (videoEl.srcObject) {
               const oldStream = videoEl.srcObject as MediaStream;
               oldStream.getTracks().forEach(track => track.stop());
@@ -902,12 +1464,12 @@ const Overlay3D: React.FC<Overlay3DProps> = ({ mode }) => {
             
             videoEl.srcObject = stream;
             
-            // Чекаємо на метадані перед запуском
+            
             await new Promise<void>((resolve) => {
               videoEl.onloadedmetadata = () => {
                 if (isMounted) {
                   videoEl.play().catch(() => {
-                    // Ігноруємо помилки play()
+                    
                   });
                 }
                 resolve();
@@ -937,61 +1499,58 @@ const Overlay3D: React.FC<Overlay3DProps> = ({ mode }) => {
 
   const handleAddModel = (url: string) => {
     const id = (globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`);
-    const item = {
+    const item: ModelData = {
       id,
       url,
-      position: [Math.random() - 0.5, 0, Math.random() - 0.5] as [number, number, number],
-      rotation: [0, 0, 0] as [number, number, number],
-      scale: [1, 1, 1] as [number, number, number],
+      position: [Math.random() - 0.5, 0, Math.random() - 0.5],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
     };
-    setLayout((prev) => {
-      const next = [...prev, item];
-      return next;
-    });
+    const next = updateModels((prev) => [...prev, item]);
+    layoutStructureRef.current = computeStructureSignature(next);
     setLayoutEpoch((e) => e + 1);
     setSelectedId(id);
   };
 
-  const handleUpdateModel = (id: string, data: any) => {
-    setLayout((prev) => {
-      const next = prev.map((obj) => (obj.id === id ? { ...obj, ...data } : obj));
-      return next;
-    });
+  const handleUpdateModel = (id: string, data: Partial<Pick<ModelData, "position" | "rotation" | "scale">>) => {
+    updateModels((prev) => prev.map((obj) => (obj.id === id ? { ...obj, ...data } : obj)));
+    
+    
+    
   };
 
   const handleRemoveModel = (id: string) => {
-    setLayout((prev) => {
-      const next = prev.filter((obj) => obj.id !== id);
-      return next;
-    });
+    const next = updateModels((prev) => prev.filter((obj) => obj.id !== id));
+    layoutStructureRef.current = computeStructureSignature(next);
     setLayoutEpoch((e) => e + 1);
     if (selectedId === id) setSelectedId(null);
   };
 
   const handleSaveLayout = () => {
-    localStorage.setItem("room-layout", JSON.stringify(layout));
+    localStorage.setItem("room-layout", JSON.stringify(models));
     alert("Room layout saved!");
   };
   const handleLoadLayout = () => {
     const raw = localStorage.getItem("room-layout");
-    if (raw) {
-      try {
-        const parsed = JSON.parse(raw);
-        // Додаємо id для старих збережень без нього
-        const withIds = Array.isArray(parsed)
-          ? parsed.map((o) => (o && o.id ? o : { ...o, id: (globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`) }))
-          : [];
-        setLayout(withIds);
-        setLayoutEpoch((e) => e + 1);
-        // Скидаємо вибір, щоб уникати неконсистентності
-        setSelectedId(null);
-      } catch {
-        setLayout([]);
-      }
+    if (!raw) return;
+    try {
+      const parsed = JSON.parse(raw);
+      const withIds = Array.isArray(parsed)
+        ? parsed.map((o) => (o && o.id ? o : { ...o, id: (globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`) }))
+        : [];
+      pendingNotifyRef.current = withIds;
+      setModels(withIds);
+      layoutStructureRef.current = computeStructureSignature(withIds);
+      setLayoutEpoch((e) => e + 1);
+      setSelectedId(null);
+    } catch {
+      pendingNotifyRef.current = [];
+      setModels([]);
+      layoutStructureRef.current = "";
     }
   };
 
-  const handleScreenshot = () => {
+  const handleScreenshot = async () => {
     console.log("=== SCREENSHOT START ===");
     
     const canvas = document.querySelector("canvas") as HTMLCanvasElement;
@@ -1002,14 +1561,14 @@ const Overlay3D: React.FC<Overlay3DProps> = ({ mode }) => {
       return;
     }
 
-    // Отримуємо розміри
+    
     const width = canvas.width;
     const height = canvas.height;
     
     console.log("Canvas size:", { width, height });
     console.log("Video element:", videoEl);
 
-    // Створюємо тимчасовий canvas для композиції
+    
     const tempCanvas = document.createElement("canvas");
     tempCanvas.width = width;
     tempCanvas.height = height;
@@ -1021,7 +1580,12 @@ const Overlay3D: React.FC<Overlay3DProps> = ({ mode }) => {
     }
 
     try {
-      // 1) Спочатку малюємо відео (якщо є)
+      
+  
+  try { (window as any).__r3fInvalidate?.(); } catch {}
+      await new Promise(requestAnimationFrame);
+
+      
       if (mode === "mobile" && videoEl && videoEl.videoWidth > 0) {
         console.log("Drawing video:", {
           videoWidth: videoEl.videoWidth,
@@ -1029,16 +1593,16 @@ const Overlay3D: React.FC<Overlay3DProps> = ({ mode }) => {
         });
         ctx.drawImage(videoEl, 0, 0, width, height);
       } else {
-        // Якщо немає відео - білий фон
+        
         ctx.fillStyle = "#ffffff";
         ctx.fillRect(0, 0, width, height);
       }
 
-      // 2) Потім малюємо Three.js canvas поверх
+      
       console.log("Drawing Three.js canvas");
       ctx.drawImage(canvas, 0, 0, width, height);
 
-      // 3) Експортуємо
+      
       const dataURL = tempCanvas.toDataURL("image/png");
       console.log("Image created, length:", dataURL.length);
       
@@ -1047,7 +1611,7 @@ const Overlay3D: React.FC<Overlay3DProps> = ({ mode }) => {
         return;
       }
 
-      // 4) Завантажуємо
+      
       const a = document.createElement("a");
       a.href = dataURL;
       a.download = `infimary-room-${Date.now()}.png`;
@@ -1062,9 +1626,9 @@ const Overlay3D: React.FC<Overlay3DProps> = ({ mode }) => {
     }
   };
 
-  // Вилучено фонову площину з відео-текстурою на користь прозорого Canvas поверх DOM-відео
+  
 
-  // ОДИН СПІЛЬНИЙ flex-контейнер для ВСІХ кнопок
+  
   return (
     <div className="overlayRoot">
       {mode === "mobile" && (
@@ -1075,18 +1639,18 @@ const Overlay3D: React.FC<Overlay3DProps> = ({ mode }) => {
         camera={{ position: [0, 3, 6], fov: 75 }}
         dpr={[1, Math.min(2, window.devicePixelRatio || 1)]}
         frameloop="demand"
-        gl={{ alpha: true, antialias: true, powerPreference: "high-performance", preserveDrawingBuffer: true, stencil: false }}
+        gl={{ alpha: true, antialias: false, powerPreference: "high-performance", preserveDrawingBuffer: false, stencil: false, precision: 'mediump' as any }}
         onCreated={({ gl }) => {
           gl.setClearColor(0x000000, 0);
-          // Трохи швидше: вимикаємо складний tone mapping
+          
           gl.toneMapping = THREE.NoToneMapping;
-          // Гарантуємо, що браузер не перехоплює жест прокрутки/масштабу
+          
           try { gl.domElement.style.touchAction = 'none'; } catch {}
         }}
       >
-  {/* Drei Performance not available in current version; skipping dynamic tuning */}
-        {/* Примусовий кадр та оновлення матриць при зміні складу layout */}
-        {/** Викликає invalidate і оновлює matrixWorld, щоб raycast одразу працював після add/remove */}
+  {}
+        {}
+        {}
         <EpochInvalidator epoch={layoutEpoch} />
         <ambientLight intensity={0.7} />
         <directionalLight position={[10, 10, 10]} />
@@ -1098,10 +1662,11 @@ const Overlay3D: React.FC<Overlay3DProps> = ({ mode }) => {
           enableRotate={false}
         />
         <Suspense fallback={null}>
-          <PreloadModels urls={layout.map(m => m.url)} />
-          {layout.map((m) => (
+          <PreloadModels urls={models.map(m => m.url)} />
+          {models.map((m) => (
             <MemoModel
-              key={`${m.id}-${layoutEpoch}`}
+              key={m.id}
+              modelId={m.id}
               {...m}
               mode={mode}
               controlsEnabled={cameraControlEnabled && pinchingIds.size === 0}
@@ -1110,6 +1675,23 @@ const Overlay3D: React.FC<Overlay3DProps> = ({ mode }) => {
               onUpdate={(data: any) => handleUpdateModel(m.id, data)}
               onSelect={() => setSelectedId(m.id)}
               onRemove={() => handleRemoveModel(m.id)}
+              activeGestureId={activeGestureId}
+              onGestureStart={(id, type) => {
+                
+                let allow = false;
+                setActiveGestureId((prev) => {
+                  if (prev == null || prev === id) {
+                    allow = true;
+                    return id;
+                  }
+                  
+                  return prev;
+                });
+                return allow;
+              }}
+              onGestureEnd={(id, type) => {
+                setActiveGestureId((prev) => (prev === id ? null : prev));
+              }}
               onPinchActiveChange={(active: boolean) => {
                 setPinchingIds((prev) => {
                   const next = new Set(prev);
@@ -1131,7 +1713,7 @@ const Overlay3D: React.FC<Overlay3DProps> = ({ mode }) => {
         </Suspense>
       </Canvas>
 
-      {/* Лейбл підказки перенесено у 3D, DOM-підказка вилучена */}
+      {}
 
       <div className="toolbar">
         <ModelGallery onAdd={handleAddModel} />
@@ -1141,7 +1723,7 @@ const Overlay3D: React.FC<Overlay3DProps> = ({ mode }) => {
           onClick={() => {
             const next = !cameraControlEnabled;
             setCameraControlEnabled(next);
-            // Якщо вмикаємо камеру і є обраний об'єкт — фокусуємось на ньому
+            
             if (next && selectedId) {
               const c = lastCentersRef.current.get(selectedId);
               if (c && controlsRef.current?.target) {
@@ -1161,18 +1743,21 @@ const Overlay3D: React.FC<Overlay3DProps> = ({ mode }) => {
         >
           {cameraControlEnabled ? 'Rotate mode' : 'Move mode'}
         </Button>
-        {/* ISOLATION MODE видалено з інтерфейсу */}
+        {}
+        {}
         <Button variant="contained" onClick={handleScreenshot}>SAVE IMAGE</Button>
         <Button variant="contained" onClick={handleSaveLayout}>SAVE LAYOUT</Button>
         <Button variant="contained" onClick={handleLoadLayout}>LOAD LAYOUT</Button>
       </div>
+  {}
+  <FpsHud enabled />
     </div>
   );
 };
 
 export default Overlay3D;
 
-// Допоміжний компонент усередині Canvas: форсує кадр після змін списку моделей
+
 const EpochInvalidator: React.FC<{ epoch: number }> = ({ epoch }) => {
   const { scene, invalidate } = useThree();
   useEffect(() => {
@@ -1187,4 +1772,34 @@ const EpochInvalidator: React.FC<{ epoch: number }> = ({ epoch }) => {
     return () => clearTimeout(t);
   }, [epoch]);
   return null;
+};
+
+
+const FpsHud: React.FC<{ enabled?: boolean }> = ({ enabled = true }) => {
+  const [fps, setFps] = React.useState<number>(0);
+  useEffect(() => {
+    if (!enabled) return;
+    let raf: number;
+    let last = performance.now();
+    let acc = 0;
+    let frames = 0;
+    const loop = (t: number) => {
+      const dt = t - last;
+      last = t;
+      acc += dt;
+      frames += 1;
+      if (acc >= 500) { 
+        setFps(Math.round((frames * 1000) / acc));
+        acc = 0;
+        frames = 0;
+      }
+      raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  }, [enabled]);
+  if (!enabled) return null;
+  return (
+    <div className="fpsHud">FPS: {fps}</div>
+  );
 };

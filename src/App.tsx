@@ -1,5 +1,5 @@
 import React, { useMemo } from "react";
-import Overlay3D from "./components/Overlay3D";
+import Overlay3D, { ModelData } from "./components/Overlay3D";
 import Gallery from "./components/Gallery";
 import { ThemeProvider } from "@mui/material/styles";
 import theme from "./theme";
@@ -9,8 +9,9 @@ import "./styles.css";
 const App: React.FC = () => {
   const isMobile = useIsMobile();
   const [view, setView] = React.useState<"scene" | "gallery">("scene");
+  const [layout, setLayout] = React.useState<ModelData[]>([]);
 
-  // "mode" визначає, чи це mobile live-камерний режим або desktop редактор
+  
   const mode = useMemo(() => (isMobile ? "mobile" : "desktop"), [isMobile]);
 
   return (
@@ -23,7 +24,11 @@ const App: React.FC = () => {
             <button onClick={() => setView("gallery")}>Gallery</button>
           </nav>
         </header>
-        {view === "scene" ? <Overlay3D mode={mode} /> : <Gallery />}
+        {view === "scene" ? (
+          <Overlay3D mode={mode} layout={layout} onLayoutChange={setLayout} />
+        ) : (
+          <Gallery />
+        )}
       </div>
     </ThemeProvider>
   );

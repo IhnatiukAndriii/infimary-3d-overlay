@@ -1,4 +1,4 @@
-/* Wrapper for each model tile with button and delete icon */
+
 .modelTile {
   position: relative;
   display: inline-flex;
@@ -10,7 +10,7 @@
   transform: translateY(-4px);
 }
 
-/* Model button styling with modern design */
+
 .modelButton {
   min-width: 120px !important;
   width: 140px !important;
@@ -61,7 +61,7 @@
   box-shadow: 0 2px 8px rgba(255, 193, 7, 0.3) !important;
 }
 
-/* Small delete button in top-right corner with better design */
+
 .deleteButton {
   position: absolute !important;
   top: -6px;
@@ -96,7 +96,7 @@
   color: white;
 }
 
-/* File name display in dialog */
+
 .fileDisplay {
   margin-top: 12px;
   padding: 12px;
@@ -107,7 +107,7 @@
   color: #666;
 }
 
-/* Responsive adjustments for model gallery */
+
 @media (max-width: 768px) {
   .modelButton {
     min-width: 100px !important;

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { Button, IconButton, TextField, Dialog, DialogTitle, DialogContent, DialogActions } from "@mui/material";
 import "./ModelGallery.css";
 
-// Simple Delete icon component (fallback if @mui/icons-material not installed)
+
 const DeleteIcon = () => (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
     <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/>
@@ -34,7 +34,7 @@ const ModelGallery: React.FC<Props> = ({ onAdd }) => {
   const [newLabel, setNewLabel] = useState("");
   const [newFile, setNewFile] = useState<File | null>(null);
 
-  // Load library from localStorage or use defaults
+  
   useEffect(() => {
     const saved = localStorage.getItem("model-library");
     if (saved) {
@@ -44,7 +44,7 @@ const ModelGallery: React.FC<Props> = ({ onAdd }) => {
     }
   }, []);
 
-  // Save library to localStorage whenever it changes
+  
   useEffect(() => {
     if (library.length > 0) {
       localStorage.setItem("model-library", JSON.stringify(library));
@@ -85,7 +85,7 @@ const ModelGallery: React.FC<Props> = ({ onAdd }) => {
             size="small"
             className="deleteButton"
             onClick={() => handleRemoveFromLibrary(m.id)}
-            title="Видалити з бібліотеки"
+            title="Remove from library"
           >
             <DeleteIcon />
           </IconButton>
@@ -98,22 +98,22 @@ const ModelGallery: React.FC<Props> = ({ onAdd }) => {
         className="modelButton"
         onClick={() => setDialogOpen(true)}
       >
-        + ДОДАТИ МОДЕЛЬ
+        + ADD MODEL
       </Button>
 
       <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)}>
-        <DialogTitle>Додати нову модель</DialogTitle>
+        <DialogTitle>Add new model</DialogTitle>
         <DialogContent>
           <TextField
             autoFocus
             margin="dense"
-            label="Назва моделі"
+            label="Model name"
             fullWidth
             value={newLabel}
             onChange={(e) => setNewLabel(e.target.value)}
           />
           <Button variant="outlined" component="label" sx={{ mt: 2 }}>
-            Вибрати файл (.glb/.gltf)
+            Choose file (.glb/.gltf)
             <input
               type="file"
               accept=".glb,.gltf"
@@ -125,12 +125,12 @@ const ModelGallery: React.FC<Props> = ({ onAdd }) => {
               }}
             />
           </Button>
-          {newFile && <div className="fileDisplay">Файл: {newFile.name}</div>}
+          {newFile && <div className="fileDisplay">File: {newFile.name}</div>}
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setDialogOpen(false)}>Скасувати</Button>
+          <Button onClick={() => setDialogOpen(false)}>Cancel</Button>
           <Button onClick={handleAddToLibrary} disabled={!newFile || !newLabel.trim()}>
-            Додати
+            Add
           </Button>
         </DialogActions>
       </Dialog>

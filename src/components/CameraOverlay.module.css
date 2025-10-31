@@ -18,24 +18,24 @@
 }
 
 .video{
-  /* Видиме відео (нижній шар) - БЕЗ GPU tricks */
+  
   position: absolute;
   width: 100%;
   height: 100%;
   object-fit: cover;
   z-index: 1;
   pointer-events: none;
-  /* Прибираємо всі оптимізації - пусть браузер сам вирішує */
+  
 }
 
 .canvas{
-  /* Fabric overlay (верхній шар) - МІНІМАЛЬНА оптимізація */
+  
   position: absolute;
   width: 100%;
   height: 100%;
   z-index: 2;
   pointer-events: auto;
-  /* Тільки базова оптимізація */
+  
   -webkit-backface-visibility: hidden;
   backface-visibility: hidden;
 }
@@ -84,4 +84,4 @@
   margin-left: 12px;
 }
 
-/* Вилучено стилі панелі діагностики */
+

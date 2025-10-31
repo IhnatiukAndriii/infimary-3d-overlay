@@ -1,4 +1,17 @@
-/* Root container for canvas and overlays */
+.fpsHud {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  padding: 4px 8px;
+  background: rgba(0, 0, 0, 0.5);
+  color: #0f0;
+  border-radius: 6px;
+  font-family: monospace;
+  font-size: 12px;
+  z-index: 10;
+  pointer-events: none;
+}
+
 .overlayRoot {
   position: relative;
   width: 100vw;
@@ -6,7 +19,7 @@
   overflow: hidden;
 }
 
-/* Visible video background under transparent WebGL canvas */
+
 .videoBg {
   position: absolute;
   top: 0;
@@ -21,8 +34,8 @@
   will-change: transform;
 }
 
-/* Transparent R3F canvas over the video */
-.r3fCanvas canvas, /* in case Canvas injects wrapper */
+
+.r3fCanvas canvas, 
 .r3fCanvas {
   position: absolute !important;
   top: 0;
@@ -34,7 +47,7 @@
   pointer-events: auto;
 }
 
-/* In-canvas small control panel for selected model */
+
 .modelControls {
   display: flex;
   gap: 8px;
@@ -71,13 +84,13 @@
   transform: translateY(0);
 }
 
-/* Bottom toolbar with gallery and actions - Glassmorphism style */
+
 .toolbar {
   position: fixed;
   left: 0;
   right: 0;
   bottom: 0;
-  z-index: 1000; /* above canvas */
+  z-index: 1000; 
   display: flex;
   flex-wrap: wrap;
   gap: 12px;
@@ -96,7 +109,7 @@
   max-height: 200px;
 }
 
-/* Custom scrollbar for toolbar */
+
 .toolbar::-webkit-scrollbar {
   height: 6px;
 }
@@ -115,7 +128,7 @@
   background: rgba(255, 193, 7, 0.7);
 }
 
-/* Animations */
+
 @keyframes fadeIn {
   from {
     opacity: 0;
@@ -138,7 +151,7 @@
   }
 }
 
-/* Responsive adjustments */
+
 @media (max-width: 768px) {
   .toolbar {
     padding: 16px 12px;
@@ -163,13 +176,13 @@
   }
 }
 
-/* Selection info overlay */
+
 .selectionInfo {
   position: fixed;
   top: 20px;
   left: 50%;
   transform: translateX(-50%);
-  z-index: 1000; /* above canvas */
+  z-index: 1000; 
   background: rgba(255, 193, 7, 0.95);
   -webkit-backdrop-filter: blur(10px);
   backdrop-filter: blur(10px);
@@ -201,7 +214,7 @@
   }
 }
 
-/* Floating delete button for model */
+
 .deleteBtn3D {
   width: 36px;
   height: 36px;

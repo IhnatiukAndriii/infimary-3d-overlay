@@ -77,18 +77,18 @@ const Gallery: React.FC = () => {
   return (
     <Box sx={{ p: 2 }}>
       <Typography variant="h5" sx={{ mb: 2, fontWeight: 700 }}>
-        Галерея макетів (Layouts)
+        Layout Gallery
       </Typography>
 
       <Card variant="outlined" sx={{ mb: 3 }}>
         <CardContent>
-          <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>Зберегти поточний макет у бібліотеку</Typography>
+          <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>Save current layout to library</Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
             Натисніть «SAVE LAYOUT» у сцені, щоб оновити поточний макет, а потім збережіть його тут з назвою.
           </Typography>
           <Stack direction={{ xs: "column", sm: "row" }} spacing={2} alignItems="center">
             <TextField
-              label="Назва макета"
+              label="Layout name"
               value={draftName}
               onChange={(e) => setDraftName(e.target.value)}
               size="small"
@@ -99,16 +99,16 @@ const Gallery: React.FC = () => {
               disabled={!currentLayout || currentLayout.length === 0}
               onClick={handleSaveCurrentToLibrary}
             >
-              Зберегти в бібліотеку
+              Save to library
             </Button>
           </Stack>
           {!currentLayout || currentLayout.length === 0 ? (
             <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 1 }}>
-              Поки немає поточного макета. Перейдіть у «3D Scene» і натисніть «SAVE LAYOUT».
+              No current layout yet. Go to "3D Scene" and press "SAVE LAYOUT".
             </Typography>
           ) : (
             <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 1 }}>
-              Поточний макет містить {currentLayout.length} об’єкт(и).
+              Current layout contains {currentLayout.length} object(s).
             </Typography>
           )}
         </CardContent>
@@ -116,9 +116,9 @@ const Gallery: React.FC = () => {
 
       <Divider sx={{ mb: 2 }} />
 
-      <Typography variant="h6" sx={{ mb: 1, fontWeight: 600 }}>Збережені макети</Typography>
+      <Typography variant="h6" sx={{ mb: 1, fontWeight: 600 }}>Saved layouts</Typography>
       {layouts.length === 0 ? (
-        <Typography color="text.secondary">Поки що немає збережених макетів.</Typography>
+        <Typography color="text.secondary">No saved layouts yet.</Typography>
       ) : (
         <Stack spacing={2}>
           {layouts.map((l) => (

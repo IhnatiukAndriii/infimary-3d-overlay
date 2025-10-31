@@ -8,7 +8,7 @@ type Props = {
 
 const PreviewModal: React.FC<Props> = ({ image, onClose }) => {
   const handleSave = () => {
-    // Створюємо посилання для завантаження
+    
     const link = document.createElement("a");
     link.href = image;
     link.download = `infimary-capture-${Date.now()}.png`;
@@ -18,14 +18,14 @@ const PreviewModal: React.FC<Props> = ({ image, onClose }) => {
   };
 
   const handleShare = async () => {
-    // Перевіряємо чи підтримується Web Share API
+    
     if (!navigator.share) {
       alert("Ваш браузер не підтримує функцію Share");
       return;
     }
 
     try {
-      // Конвертуємо base64 в Blob
+      
       const response = await fetch(image);
       const blob = await response.blob();
       const file = new File([blob], `infimary-capture-${Date.now()}.png`, { type: "image/png" });

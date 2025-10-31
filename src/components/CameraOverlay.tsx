@@ -21,7 +21,7 @@ const CameraOverlay: React.FC = () => {
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>("");
   
 
-  // Відкрити камеру - ПОВНІСТЮ ВИПРАВЛЕНА ВЕРСІЯ
+  
   useEffect(() => {
     let isMounted = true;
     let currentPlayPromise: Promise<void> | null = null;
@@ -50,7 +50,7 @@ const CameraOverlay: React.FC = () => {
         streamRef.current = stream;
         video.srcObject = stream;
 
-        // Чекаємо готовності метаданих
+        
         await new Promise<void>((resolve) => {
           if (video.readyState >= 2) {
             resolve();
@@ -65,7 +65,7 @@ const CameraOverlay: React.FC = () => {
 
         if (!isMounted || cancelPlayRef.current) return;
 
-        // Запускаємо відтворення
+        
         try {
           currentPlayPromise = video.play();
           playPromiseRef.current = currentPlayPromise;
@@ -76,13 +76,13 @@ const CameraOverlay: React.FC = () => {
           setVideoReady(true);
           setCameraError(null);
         } catch (error: any) {
-          // Ігноруємо AbortError - це нормально при cleanup
+          
           if (error?.name === "AbortError" || !isMounted || cancelPlayRef.current) {
             return;
           }
           console.warn("Video play() error:", error?.name);
           if (isMounted) {
-            setCameraError("Не вдалося відтворити відео");
+            setCameraError("Failed to play video");
             setVideoReady(false);
           }
         }
@@ -90,16 +90,16 @@ const CameraOverlay: React.FC = () => {
         if (!isMounted) return;
         
         const name = err?.name || 'Error';
-        let friendly = "Не вдалося запустити камеру.";
-        if (name === "NotAllowedError") friendly = "Доступ до камери заборонено.";
-        else if (name === "NotFoundError") friendly = "Камеру не знайдено.";
-        else if (name === "NotReadableError") friendly = "Камера зайнята іншою програмою.";
+        let friendly = "Failed to start camera.";
+        if (name === "NotAllowedError") friendly = "Camera access denied.";
+        else if (name === "NotFoundError") friendly = "Camera not found.";
+        else if (name === "NotReadableError") friendly = "Camera is busy by another application.";
         
         setCameraError(`${friendly} (${name})`);
       }
     };
 
-    // Отримати список камер
+    
     navigator.mediaDevices.enumerateDevices()
       .then(all => {
         if (!isMounted) return;
@@ -117,25 +117,25 @@ const CameraOverlay: React.FC = () => {
       isMounted = false;
       cancelPlayRef.current = true;
       
-      // Чекаємо завершення play promise перед cleanup
+      
       const cleanup = async () => {
         if (currentPlayPromise) {
           try {
             await currentPlayPromise;
           } catch (e) {
-            // Ігноруємо помилки
+            
           }
         }
 
         const video = videoRef.current;
         
-        // Зупиняємо stream
+        
         if (streamRef.current) {
           streamRef.current.getTracks().forEach((t) => t.stop());
           streamRef.current = null;
         }
         
-        // Чистимо video element тільки після завершення play()
+        
         if (video) {
           video.srcObject = null;
         }
@@ -149,11 +149,11 @@ const CameraOverlay: React.FC = () => {
     };
   }, [restartTick, selectedDeviceId]);
 
-  // Вилучено панель діагностики та перемикач Fabric
+  
 
   const handleRetryCamera = () => setRestartTick((n) => n + 1);
 
-  // Ініціалізація Fabric.js
+  
   useEffect(() => {
     if (!fabricCanvasRef.current || fabricRef.current) return;
     
@@ -177,8 +177,8 @@ const CameraOverlay: React.FC = () => {
     const ctx = canvas.getContext();
     ctx.imageSmoothingEnabled = false;
 
-    // ПОВНІСТЮ ВИМКНУТИ автоматичний рендеринг - тільки вручну
-    // Рендерити тільки коли користувач відпустив мишу
+    
+    
     let isInteracting = false;
     
     const startInteraction = () => {
@@ -187,7 +187,7 @@ const CameraOverlay: React.FC = () => {
     
     const endInteraction = () => {
       isInteracting = false;
-      // Рендерити тільки раз на кінець
+      
       setTimeout(() => {
         fabricRef.current?.renderAll();
       }, 0);
@@ -203,12 +203,12 @@ const CameraOverlay: React.FC = () => {
     canvas.on("selection:cleared", () => fabricRef.current?.renderAll());
     canvas.on("selection:updated", () => fabricRef.current?.renderAll());
     
-    // КРИТИЧНО: вимкнути всі інші події що можуть тригерити рендеринг
-    canvas.on("object:moving", () => {}); // Нічого не робити під час руху
+    
+    canvas.on("object:moving", () => {}); 
     canvas.on("object:scaling", () => {});
     canvas.on("object:rotating", () => {});
     
-    // Вилучено діагностику рендерингу
+    
     
     return () => {
       if (fabricRef.current) {
@@ -219,7 +219,7 @@ const CameraOverlay: React.FC = () => {
     };
   }, []);
 
-  // Синхронізувати розмір Fabric canvas - ОДИН РАЗ
+  
   useEffect(() => {
     if (!videoReady) return;
     
@@ -235,7 +235,7 @@ const CameraOverlay: React.FC = () => {
       const containerWidth = container.clientWidth;
       const containerHeight = container.clientHeight;
 
-      // Оновити тільки Fabric canvas
+      
       fabricRef.current.setDimensions({ 
         width: containerWidth, 
         height: containerHeight 
@@ -248,9 +248,9 @@ const CameraOverlay: React.FC = () => {
 
     const video = videoRef.current;
     video?.addEventListener("loadedmetadata", updateCanvasSize);
-    // ПРИБРАЛИ "playing" та "resize" - вони викликають мерехтіння!
+    
 
-    // Виклик один раз через невелику затримку
+    
     const timeout = setTimeout(updateCanvasSize, 300);
 
     return () => {
@@ -259,7 +259,7 @@ const CameraOverlay: React.FC = () => {
     };
   }, [videoReady]);
 
-  // Додавання об'єкта з тулбара
+  
   const handleAddObject = useCallback((type: string, imageSrc?: string) => {
     if (!fabricRef.current) return;
     
@@ -321,7 +321,7 @@ const CameraOverlay: React.FC = () => {
     }
   }, []);
 
-  // Видалення активного об'єкта клавішею Delete
+  
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Delete" && fabricRef.current) {
@@ -336,31 +336,31 @@ const CameraOverlay: React.FC = () => {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
-  // Захоплення знімка - ВИПРАВЛЕНА ВЕРСІЯ З АЛЬТЕРНАТИВНИМ МЕТОДОМ
+  
   const handleCapture = useCallback(() => {
     if (!videoRef.current || !fabricRef.current || !fabricCanvasRef.current) {
       console.error("Video or Fabric canvas not ready");
-      alert("Компоненти не готові. Спробуйте ще раз.");
+      alert("Components not ready. Please try again.");
       return;
     }
     
     const video = videoRef.current;
     const fabricCanvas = fabricRef.current;
     
-    // Перевірка що відео готове
+    
     if (!videoReady || video.readyState < 2 || video.paused) {
       console.error("Video not ready", { 
         videoReady, 
         readyState: video.readyState, 
         paused: video.paused 
       });
-      alert("Відео ще не готове, спробуйте ще раз");
+      alert("Video not ready yet, please try again");
       return;
     }
 
-    // Чекаємо наступний кадр відео
+    
     requestAnimationFrame(() => {
-      // Отримуємо реальні розміри відео stream
+      
       const videoWidth = video.videoWidth;
       const videoHeight = video.videoHeight;
 
@@ -375,11 +375,11 @@ const CameraOverlay: React.FC = () => {
 
       if (videoWidth === 0 || videoHeight === 0) {
         console.error("Video dimensions are zero!");
-        alert("Неможливо захопити зображення - невірні розміри відео");
+        alert("Cannot capture image - invalid video dimensions");
         return;
       }
 
-      // Створюємо canvas з розмірами відео
+      
       const tempCanvas = document.createElement("canvas");
       tempCanvas.width = videoWidth;
       tempCanvas.height = videoHeight;
@@ -393,25 +393,25 @@ const CameraOverlay: React.FC = () => {
       
       if (!ctx) {
         console.error("Failed to get canvas context");
-        alert("Помилка створення canvas");
+        alert("Error creating canvas");
         return;
       }
 
       try {
-        // Заповнюємо чорним фоном для тесту
+        
         ctx.fillStyle = "#000000";
         ctx.fillRect(0, 0, videoWidth, videoHeight);
         console.log("Black background drawn");
 
-        // 1) Малюємо відео
+        
         ctx.drawImage(video, 0, 0, videoWidth, videoHeight);
         console.log("Video drawn to canvas");
         
-        // Перевіряємо чи відео намалювалось
+        
         const imageData = ctx.getImageData(0, 0, 1, 1);
         console.log("First pixel after video draw:", imageData.data);
 
-        // 2) Малюємо Fabric overlay
+        
         const fabricElement = fabricCanvas.getElement();
         const fabricWidth = fabricElement.width;
         const fabricHeight = fabricElement.height;
@@ -419,10 +419,10 @@ const CameraOverlay: React.FC = () => {
         console.log("Fabric canvas:", { fabricWidth, fabricHeight });
         
         if (fabricWidth > 0 && fabricHeight > 0) {
-          // Оновлюємо fabric перед експортом
+          
           fabricCanvas.renderAll();
           
-          // Масштабуємо до розмірів відео
+          
           const scaleX = videoWidth / fabricWidth;
           const scaleY = videoHeight / fabricHeight;
           
@@ -436,14 +436,14 @@ const CameraOverlay: React.FC = () => {
           console.log("Fabric overlay drawn");
         }
 
-        // 3) Конвертуємо в dataURL
+        
         const finalImage = tempCanvas.toDataURL("image/jpeg", 0.92);
         console.log("Final image created, length:", finalImage.length);
         console.log("Data URL prefix:", finalImage.substring(0, 50));
         
         if (finalImage.length < 1000) {
           console.error("Image too small, might be empty!");
-          alert("Зображення здається пустим. Length: " + finalImage.length);
+          alert("Image seems empty. Length: " + finalImage.length);
           return;
         }
         
@@ -452,7 +452,7 @@ const CameraOverlay: React.FC = () => {
         setIsPreview(true);
       } catch (error) {
         console.error("Error during capture:", error);
-        alert("Помилка при захопленні: " + error);
+        alert("Error during capture: " + error);
       }
     });
   }, [videoReady]);
@@ -460,7 +460,7 @@ const CameraOverlay: React.FC = () => {
   return (
     <div className={styles.screen}>
       <div className={styles.container}>
-        {/* ВИДИМЕ відео (нижній шар) */}
+        {}
         <video 
           ref={videoRef} 
           playsInline 
@@ -468,7 +468,7 @@ const CameraOverlay: React.FC = () => {
           className={styles.video} 
         />
         
-        {/* Прозорий Fabric canvas поверх відео (верхній шар) */}
+        {}
         <canvas 
           ref={fabricCanvasRef} 
           className={styles.canvas}
@@ -480,7 +480,7 @@ const CameraOverlay: React.FC = () => {
             <button className={styles.retryBtn} onClick={handleRetryCamera}>Повторити</button>
             {devices.length > 0 && (
               <div className={styles.devicePicker}>
-                <label htmlFor="deviceSel">Камера:</label>
+                <label htmlFor="deviceSel">Camera:</label>
                 <select
                   id="deviceSel"
                   value={selectedDeviceId}
