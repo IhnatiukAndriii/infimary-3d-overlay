@@ -3,6 +3,7 @@ import { fabric } from "fabric";
 import ObjectToolbar from "./ObjectToolbar";
 import PreviewModal from "./PreviewModal";
 import styles from "./CameraOverlay.module.css";
+import { SvgAsset, SVG_LIBRARY_STORAGE_KEY } from "../types/svg";
 
 const CameraOverlay: React.FC = () => {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -19,6 +20,109 @@ const CameraOverlay: React.FC = () => {
   const [restartTick, setRestartTick] = useState<number>(0);
   const [devices, setDevices] = useState<Array<{ label: string; deviceId: string }>>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>("");
+  const [svgLibrary, setSvgLibrary] = useState<SvgAsset[]>([]);
+
+  const updateCanvasSize = useCallback(() => {
+    const canvasEl = fabricCanvasRef.current;
+    const fabricCanvas = fabricRef.current;
+    if (!canvasEl || !fabricCanvas) return;
+
+    const host = canvasEl.parentElement;
+    const bounds = host?.getBoundingClientRect();
+    const nextWidth = Math.max(1, Math.round(bounds?.width ?? window.innerWidth));
+    const nextHeight = Math.max(1, Math.round(bounds?.height ?? window.innerHeight));
+
+    if (!Number.isFinite(nextWidth) || !Number.isFinite(nextHeight)) return;
+
+    const applySize = (element?: HTMLCanvasElement | HTMLDivElement | null) => {
+      if (!element) return;
+      element.style.width = `${nextWidth}px`;
+      element.style.height = `${nextHeight}px`;
+      if (element instanceof HTMLCanvasElement) {
+        element.width = nextWidth;
+        element.height = nextHeight;
+      }
+    };
+
+    const internals = fabricCanvas as unknown as {
+      lowerCanvasEl?: HTMLCanvasElement;
+      upperCanvasEl?: HTMLCanvasElement;
+      wrapperEl?: HTMLDivElement;
+    };
+
+    applySize(canvasEl);
+    const lowerEl = internals.lowerCanvasEl ?? fabricCanvas.getElement();
+    const upperEl = internals.upperCanvasEl ?? undefined;
+    applySize(lowerEl);
+    applySize(upperEl);
+    applySize(fabricCanvas.getSelectionElement());
+    const wrapperEl = internals.wrapperEl ?? undefined;
+    applySize(wrapperEl);
+    // Force absolute positioning to fully cover host container
+    if (wrapperEl) {
+      wrapperEl.style.position = 'absolute';
+      wrapperEl.style.top = '0';
+      wrapperEl.style.left = '0';
+      wrapperEl.style.right = '0';
+      wrapperEl.style.bottom = '0';
+      wrapperEl.style.zIndex = '2';
+    }
+    if (lowerEl) {
+      lowerEl.style.position = 'absolute';
+      lowerEl.style.top = '0';
+      lowerEl.style.left = '0';
+    }
+    if (upperEl) {
+      upperEl.style.position = 'absolute';
+      upperEl.style.top = '0';
+      upperEl.style.left = '0';
+    }
+
+    // Ensure Fabric internal sizes align with CSS sizes
+    fabricCanvas.setDimensions({ width: nextWidth, height: nextHeight });
+    fabricCanvas.setWidth(nextWidth);
+    fabricCanvas.setHeight(nextHeight);
+    if (lowerEl) {
+      lowerEl.width = nextWidth;
+      lowerEl.height = nextHeight;
+    }
+    if (upperEl) {
+      upperEl.width = nextWidth;
+      upperEl.height = nextHeight;
+    }
+
+    fabricCanvas.setViewportTransform([1, 0, 0, 1, 0, 0]);
+    fabricCanvas.calcOffset();
+    fabricCanvas.requestRenderAll();
+  }, []);
+
+  const reloadSvgLibrary = useCallback(() => {
+    try {
+      const raw = localStorage.getItem(SVG_LIBRARY_STORAGE_KEY);
+      if (!raw) {
+        setSvgLibrary([]);
+        return;
+      }
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        setSvgLibrary(parsed as SvgAsset[]);
+      } else {
+        setSvgLibrary([]);
+      }
+    } catch (error) {
+      console.warn("Failed to parse SVG library", error);
+      setSvgLibrary([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    reloadSvgLibrary();
+    const handleUpdate = () => reloadSvgLibrary();
+    window.addEventListener("svg-library-updated", handleUpdate);
+    return () => {
+      window.removeEventListener("svg-library-updated", handleUpdate);
+    };
+  }, [reloadSvgLibrary]);
   
 
   
@@ -27,9 +131,21 @@ const CameraOverlay: React.FC = () => {
     let currentPlayPromise: Promise<void> | null = null;
     cancelPlayRef.current = false;
 
+    const mediaDevices = navigator.mediaDevices;
+
+    if (!mediaDevices?.getUserMedia) {
+      setCameraError("Camera API is not available in this environment.");
+      setVideoReady(false);
+      setDevices([]);
+      return () => {
+        isMounted = false;
+        cancelPlayRef.current = true;
+      };
+    }
+
     const startCamera = async () => {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({
+        const stream = await mediaDevices.getUserMedia({
           video: selectedDeviceId 
             ? { deviceId: { exact: selectedDeviceId } }
             : { facingMode: "environment", width: { ideal: 1920 }, height: { ideal: 1080 } },
@@ -100,44 +216,48 @@ const CameraOverlay: React.FC = () => {
     };
 
     
-    navigator.mediaDevices.enumerateDevices()
-      .then(all => {
-        if (!isMounted) return;
-        const videos = all.filter(d => d.kind === 'videoinput');
-        setDevices(videos.map(v => ({ 
-          label: v.label || `Camera ${v.deviceId.slice(0, 6)}`, 
-          deviceId: v.deviceId 
-        })));
-      })
-      .catch(() => {});
+    if (mediaDevices.enumerateDevices) {
+      mediaDevices.enumerateDevices()
+        .then(all => {
+          if (!isMounted) return;
+          const videos = all.filter(d => d.kind === 'videoinput');
+          setDevices(videos.map(v => ({ 
+            label: v.label || `Camera ${v.deviceId.slice(0, 6)}`, 
+            deviceId: v.deviceId 
+          })));
+        })
+        .catch(() => {});
+    } else {
+      setDevices([]);
+    }
 
     startCamera();
 
     return () => {
       isMounted = false;
       cancelPlayRef.current = true;
-      
-      
+
+      // Capture current ref values to stable locals for cleanup to satisfy linting and avoid races
+      const finishingPlayPromise = currentPlayPromise;
+      const currentStream = streamRef.current;
+      const videoEl = videoRef.current;
+
       const cleanup = async () => {
-        if (currentPlayPromise) {
+        if (finishingPlayPromise) {
           try {
-            await currentPlayPromise;
+            await finishingPlayPromise;
           } catch (e) {
             
           }
         }
 
-        const video = videoRef.current;
-        
-        
-        if (streamRef.current) {
-          streamRef.current.getTracks().forEach((t) => t.stop());
+        if (currentStream) {
+          currentStream.getTracks().forEach((t) => t.stop());
           streamRef.current = null;
         }
-        
-        
-        if (video) {
-          video.srcObject = null;
+
+        if (videoEl) {
+          videoEl.srcObject = null;
         }
 
         playPromiseRef.current = null;
@@ -156,8 +276,29 @@ const CameraOverlay: React.FC = () => {
   
   useEffect(() => {
     if (!fabricCanvasRef.current || fabricRef.current) return;
-    
+
     const canvasEl = fabricCanvasRef.current;
+
+    try {
+      const context = canvasEl.getContext("2d");
+      if (!context) {
+        console.warn("Canvas context unavailable; skipping Fabric setup.");
+        return;
+      }
+    } catch (error) {
+      console.warn("Canvas context not supported in this environment; skipping Fabric setup.", error);
+      return;
+    }
+
+    // Set initial size BEFORE Fabric wraps the canvas, to avoid a small default 300x150 wrapper
+    const host = canvasEl.parentElement;
+    const bounds = host?.getBoundingClientRect();
+    const initW = Math.max(1, Math.round(bounds?.width ?? window.innerWidth));
+    const initH = Math.max(1, Math.round(bounds?.height ?? window.innerHeight));
+    canvasEl.width = initW;
+    canvasEl.height = initH;
+    canvasEl.style.width = `${initW}px`;
+    canvasEl.style.height = `${initH}px`;
 
     fabricRef.current = new fabric.Canvas(canvasEl, {
       selection: true,
@@ -173,40 +314,28 @@ const CameraOverlay: React.FC = () => {
       uniformScaling: false,
     });
 
+  updateCanvasSize();
+
     const canvas = fabricRef.current;
     const ctx = canvas.getContext();
-    ctx.imageSmoothingEnabled = false;
+    if (ctx) {
+      ctx.imageSmoothingEnabled = false;
+    }
 
     
     
-    let isInteracting = false;
-    
-    const startInteraction = () => {
-      isInteracting = true;
-    };
-    
-    const endInteraction = () => {
-      isInteracting = false;
-      
-      setTimeout(() => {
-        fabricRef.current?.renderAll();
-      }, 0);
-    };
-
     canvas.on("object:added", () => fabricRef.current?.renderAll());
     canvas.on("object:removed", () => fabricRef.current?.renderAll());
-    canvas.on("object:modified", endInteraction);
-    
-    canvas.on("mouse:down", startInteraction);
-    canvas.on("mouse:up", endInteraction);
+    canvas.on("object:modified", () => {
+      setTimeout(() => fabricRef.current?.renderAll(), 0);
+    });
+    canvas.on("mouse:down", () => {});
+    canvas.on("mouse:up", () => {
+      setTimeout(() => fabricRef.current?.renderAll(), 0);
+    });
     canvas.on("selection:created", () => fabricRef.current?.renderAll());
     canvas.on("selection:cleared", () => fabricRef.current?.renderAll());
     canvas.on("selection:updated", () => fabricRef.current?.renderAll());
-    
-    
-    canvas.on("object:moving", () => {}); 
-    canvas.on("object:scaling", () => {});
-    canvas.on("object:rotating", () => {});
     
     
     
@@ -217,47 +346,35 @@ const CameraOverlay: React.FC = () => {
         fabricRef.current = null;
       }
     };
-  }, []);
+  }, [updateCanvasSize]);
 
   
   useEffect(() => {
-    if (!videoReady) return;
-    
-    const updateCanvasSize = () => {
-      if (!videoRef.current || !fabricCanvasRef.current || !fabricRef.current) return;
+    updateCanvasSize();
 
-      const video = videoRef.current;
-      if (video.videoWidth === 0 || video.videoHeight === 0) return;
+    const handleResize = () => updateCanvasSize();
+    window.addEventListener("resize", handleResize);
 
-      const container = fabricCanvasRef.current.parentElement;
-      if (!container) return;
-
-      const containerWidth = container.clientWidth;
-      const containerHeight = container.clientHeight;
-
-      
-      fabricRef.current.setDimensions({ 
-        width: containerWidth, 
-        height: containerHeight 
-      });
-      
-      fabricRef.current.setViewportTransform([1, 0, 0, 1, 0, 0]);
-      fabricRef.current.calcOffset();
-      fabricRef.current.renderAll();
-    };
+    const parent = fabricCanvasRef.current?.parentElement ?? null;
+    const resizeObserver = typeof ResizeObserver !== "undefined" && parent
+      ? new ResizeObserver(() => updateCanvasSize())
+      : null;
+    if (resizeObserver && parent) {
+      resizeObserver.observe(parent);
+    }
 
     const video = videoRef.current;
-    video?.addEventListener("loadedmetadata", updateCanvasSize);
-    
-
-    
-    const timeout = setTimeout(updateCanvasSize, 300);
+    const onLoadedMetadata = () => updateCanvasSize();
+    video?.addEventListener("loadedmetadata", onLoadedMetadata);
 
     return () => {
-      clearTimeout(timeout);
-      video?.removeEventListener("loadedmetadata", updateCanvasSize);
+      window.removeEventListener("resize", handleResize);
+      if (resizeObserver) {
+        resizeObserver.disconnect();
+      }
+      video?.removeEventListener("loadedmetadata", onLoadedMetadata);
     };
-  }, [videoReady]);
+  }, [updateCanvasSize]);
 
   
   const handleAddObject = useCallback((type: string, imageSrc?: string) => {
@@ -302,7 +419,51 @@ const CameraOverlay: React.FC = () => {
         fabricRef.current!.add(img);
         fabricRef.current!.setActiveObject(img);
         fabricRef.current!.renderAll();
-      });
+        if (imageSrc.startsWith("blob:")) {
+          URL.revokeObjectURL(imageSrc);
+        }
+      }, { crossOrigin: "anonymous" });
+    } else if (type === "svg" && imageSrc) {
+      const source = imageSrc;
+      fetch(source)
+        .then((response) => response.text())
+        .then((svgText) => {
+          fabric.loadSVGFromString(svgText, (objects, options) => {
+            const grouped = fabric.util.groupSVGElements(
+              objects as fabric.Object[],
+              options || {}
+            );
+            grouped.set({
+              left: 140,
+              top: 140,
+              shadow: shadowConfig,
+              opacity: 0.95,
+              cornerStyle: 'circle' as const,
+            });
+
+            const width = grouped.width ?? 0;
+            const height = grouped.height ?? 0;
+            const maxDim = Math.max(width, height);
+            if (maxDim > 0) {
+              const target = 200;
+              const factor = Math.min(1, target / maxDim);
+              grouped.scale(factor);
+            }
+
+            fabricRef.current!.add(grouped);
+            fabricRef.current!.setActiveObject(grouped);
+            fabricRef.current!.renderAll();
+          });
+        })
+        .catch((error) => {
+          console.error("SVG load error", error);
+          alert("Не вдалося додати SVG. Переконайтеся, що файл коректний.");
+        })
+        .finally(() => {
+          if (source.startsWith("blob:")) {
+            URL.revokeObjectURL(source);
+          }
+        });
     } else if (type === "circle") {
       const obj = new fabric.Circle({
         left: 100,
@@ -498,8 +659,21 @@ const CameraOverlay: React.FC = () => {
           </div>
         )}
         
-        <ObjectToolbar onAdd={handleAddObject} />
-        <button onClick={handleCapture} className={styles.captureBtn}>📸 Capture</button>
+        {svgLibrary.length > 0 && (
+          <div className={styles.svgLibrary}>
+            {svgLibrary.map((asset) => (
+              <button
+                key={asset.id}
+                type="button"
+                onClick={() => handleAddObject("svg", asset.dataUrl)}
+              >
+                {asset.name}
+              </button>
+            ))}
+          </div>
+        )}
+
+  <ObjectToolbar onAdd={handleAddObject} onCapture={handleCapture} />
         
         {isPreview && capturedImage && (
           <PreviewModal

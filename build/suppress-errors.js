@@ -1,9 +1,9 @@
-// Цей скрипт завантажується ПЕРЕД React для придушення помилок розширень
+
 
 (function() {
   'use strict';
 
-  // 1. Перехоплюємо console.error
+  
   const originalError = console.error;
   console.error = function(...args) {
     const message = args.map(a => String(a)).join(' ');
@@ -15,12 +15,12 @@
       message.includes('Extension context') ||
       message.includes('message port closed')
     ) {
-      return; // Не показуємо
+      return; 
     }
     originalError.apply(console, args);
   };
 
-  // 2. Перехоплюємо console.warn
+  
   const originalWarn = console.warn;
   console.warn = function(...args) {
     const message = args.map(a => String(a)).join(' ');
@@ -34,7 +34,7 @@
     originalWarn.apply(console, args);
   };
 
-  // 3. Глобальні error handlers
+  
   window.addEventListener('error', function(e) {
     const msg = e.message || '';
     if (

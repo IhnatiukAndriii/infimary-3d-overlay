@@ -1,0 +1,68 @@
+.objectToolbar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 16px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: center;
+  align-items: center;
+  padding: 14px 20px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 -6px 30px rgba(0, 0, 0, 0.18);
+  z-index: 10;
+}
+
+.objectToolbar button {
+  border: none;
+  border-radius: 10px;
+  padding: 10px 18px;
+  font-weight: 600;
+  cursor: pointer;
+  background: linear-gradient(135deg, #ffc107 0%, #ff9800 100%);
+  color: #2f2f2f;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.objectToolbar button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 22px rgba(255, 152, 0, 0.4);
+}
+
+.objectToolbar__upload {
+  position: relative;
+  overflow: hidden;
+  border-radius: 10px;
+  padding: 10px 16px;
+  background: rgba(0, 0, 0, 0.05);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.objectToolbar__upload span {
+  pointer-events: none;
+}
+
+.objectToolbar__upload input {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+@media (max-width: 600px) {
+  .objectToolbar {
+    gap: 8px;
+    padding: 12px 12px;
+  }
+
+  .objectToolbar button,
+  .objectToolbar__upload {
+    padding: 8px 14px;
+  }
+}

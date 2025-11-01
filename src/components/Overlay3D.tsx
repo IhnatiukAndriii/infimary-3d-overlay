@@ -50,7 +50,10 @@ type ModelProps = {
 function Model({ modelId, url, position, rotation, scale, selected, onUpdate, onSelect, onRemove, controlsEnabled, layoutEpoch, onPinchActiveChange, onFocusCenter, activeGestureId, onGestureStart, onGestureEnd }: ModelProps) {
   const { scene } = (useGLTF(url) as unknown) as { scene: THREE.Object3D };
   
-  
+  // 🔒 Memoize position prop to prevent unnecessary re-syncs when only `selected` changes
+  const stablePosition = React.useMemo<[number, number, number]>(() => {
+    return [position[0], position[1], position[2]];
+  }, [position[0], position[1], position[2]]);
   
   const [localPosition, setLocalPosition] = useState<[number, number, number]>([0, 0, 0]);
   const [localRotation, setLocalRotation] = useState<[number, number, number]>([0, 0, 0]);
@@ -58,6 +61,7 @@ function Model({ modelId, url, position, rotation, scale, selected, onUpdate, on
   
   
   const initializedRef = useRef(false);
+  const isSelectingRef = useRef(false); // 🔒 Block position updates during selection changes
   
   
   
@@ -207,6 +211,13 @@ function Model({ modelId, url, position, rotation, scale, selected, onUpdate, on
     lastPropPositionForLocalRef.current = [...next] as [number, number, number];
   };
   const commitRefPosition = (next: [number, number, number]) => {
+    // 🔒 NEVER update position during selection changes
+    if (isSelectingRef.current) {
+      console.log(`[${modelId.slice(0,8)}] ⏸️ commitRefPosition blocked - selection changing`);
+      pendingRefSyncRef.current = [...next] as [number, number, number];
+      return;
+    }
+    
     if (!ref.current) {
       pendingRefSyncRef.current = [...next] as [number, number, number];
       return;
@@ -271,8 +282,8 @@ function Model({ modelId, url, position, rotation, scale, selected, onUpdate, on
   useEffect(() => {
     if (ref.current && !initialPositionSet.current) {
       
-      ref.current.position.set(position[0], position[1], position[2]);
-      console.log(`[${modelId.slice(0,8)}] Initialized ref.position from props:`, position);
+      ref.current.position.set(stablePosition[0], stablePosition[1], stablePosition[2]);
+      console.log(`[${modelId.slice(0,8)}] Initialized ref.position from props:`, stablePosition);
       
       
       const actualPos: [number, number, number] = [
@@ -291,7 +302,7 @@ function Model({ modelId, url, position, rotation, scale, selected, onUpdate, on
       initialPositionSet.current = true;
       initializedRef.current = true;
     }
-  }, [position, rotation, scale, modelId]);
+  }, [stablePosition, rotation, scale, modelId]);
   
   
   
@@ -303,32 +314,52 @@ function Model({ modelId, url, position, rotation, scale, selected, onUpdate, on
   // ✅ UNIFIED SYNC: Synchronize BOTH localPosition and ref.position from props
   // This replaces 3 separate useEffects that were conflicting
   useEffect(() => {
-    if (!initializedRef.current) return;
+    if (!initializedRef.current) {
+      console.log(`[${modelId.slice(0,8)}] ⏸️ Unified sync skipped - not initialized yet`);
+      return;
+    }
 
-    const nextFromProps: [number, number, number] = [position[0], position[1], position[2]];
+    // 🔒 CRITICAL: Block position updates during selection changes
+    if (isSelectingRef.current) {
+      console.log(`[${modelId.slice(0,8)}] ⏸️ Unified sync skipped - selection changing`);
+      return;
+    }
+
+    // CRITICAL FIX: Skip sync during selection changes
+    // When a model is selected/deselected, we should NOT sync positions
+    // This prevents teleportation when switching between models
+    if (isDragging || isPinching || isRotating) {
+      console.log(`[${modelId.slice(0,8)}] ⏸️ Unified sync skipped - gesture active`);
+      return;
+    }
+
+    const nextFromProps: [number, number, number] = [stablePosition[0], stablePosition[1], stablePosition[2]];
     const parentPrev = lastParentPropPositionRef.current;
     const changed = !parentPrev || !arePositionsClose(parentPrev, nextFromProps);
 
+    console.log(
+      `[${modelId.slice(0,8)}] 🔄 Unified sync check:`,
+      'changed:', changed,
+      'prev:', parentPrev,
+      'next:', nextFromProps,
+      'selected:', selected,
+      'refPos:', ref.current ? [ref.current.position.x, ref.current.position.y, ref.current.position.z].map(v => v.toFixed(3)) : 'no-ref'
+    );
+
     if (!changed) {
       // Position hasn't changed, skip all syncs
+      console.log(`[${modelId.slice(0,8)}] ✅ No position change detected, skipping sync`);
       return;
     }
 
     console.log(
-      `[${modelId.slice(0,8)}] 🔍 Position prop changed:`,
-      'from:', parentPrev,
-      'to:', nextFromProps
+      `[${modelId.slice(0,8)}] � Position prop REALLY changed!`,
+      'from:', parentPrev?.map(v => v.toFixed(3)),
+      'to:', nextFromProps.map(v => v.toFixed(3)),
+      'diff:', parentPrev ? nextFromProps.map((v, i) => (v - parentPrev[i]).toFixed(4)) : 'n/a'
     );
 
     lastParentPropPositionRef.current = [...nextFromProps] as [number, number, number];
-
-    // Defer sync if user is actively manipulating this model
-    if (isDragging || isPinching || isRotating) {
-      pendingLocalSyncRef.current = [...nextFromProps] as [number, number, number];
-      pendingRefSyncRef.current = [...nextFromProps] as [number, number, number];
-      console.log(`[${modelId.slice(0,8)}] ⏸️ Sync deferred (gesture active)`);
-      return;
-    }
 
     // Sync localPosition state
     const lastApplied = lastPropPositionForLocalRef.current;
@@ -355,13 +386,20 @@ function Model({ modelId, url, position, rotation, scale, selected, onUpdate, on
       // Ref not ready yet, defer
       pendingRefSyncRef.current = [...nextFromProps] as [number, number, number];
     }
-  }, [position, isDragging, isPinching, isRotating, modelId, arePositionsClose]);
+  }, [stablePosition, isDragging, isPinching, isRotating, modelId, arePositionsClose]);
   
   
   // SYNC #1: layoutEpoch changed → force sync on structure change (add/remove models)
   useEffect(() => {
     if (layoutEpoch == null) return;
-    const nextFromProps: [number, number, number] = [position[0], position[1], position[2]];
+    
+    // 🔒 Block position updates during selection changes
+    if (isSelectingRef.current) {
+      console.log(`[${modelId.slice(0,8)}] ⏸️ LayoutEpoch sync skipped - selection changing`);
+      return;
+    }
+    
+    const nextFromProps: [number, number, number] = [stablePosition[0], stablePosition[1], stablePosition[2]];
     lastParentPropPositionRef.current = [...nextFromProps] as [number, number, number];
 
     if (isDragging || isPinching || isRotating) {
@@ -391,7 +429,7 @@ function Model({ modelId, url, position, rotation, scale, selected, onUpdate, on
       'from:', beforeSync, 'to:', nextFromProps);
     
   
-  }, [layoutEpoch, position, modelId, arePositionsClose]);
+  }, [layoutEpoch, stablePosition, modelId, arePositionsClose]);
 
   
   useEffect(() => {
@@ -425,7 +463,10 @@ function Model({ modelId, url, position, rotation, scale, selected, onUpdate, on
     console.log(`[${modelId.slice(0,8)}] 🎯 SELECTED CHANGED:`, selected, 
       '\n  ref.pos:', ref.current?.position.toArray(), 
       '\n  localPos:', localPosition, 
-      '\n  prop pos:', position);
+      '\n  prop pos:', stablePosition);
+    
+    // 🔒 CRITICAL: Block ALL position updates during selection change
+    isSelectingRef.current = true;
     
     
     dragEnableAtRef.current = Date.now() + 200;
@@ -443,6 +484,16 @@ function Model({ modelId, url, position, rotation, scale, selected, onUpdate, on
     lastDragPlaneRef.current = null;
     setIsDragging(false);
     setIsRotating(false);
+    
+    // Unblock position updates after a short delay
+    const timer = setTimeout(() => {
+      isSelectingRef.current = false;
+    }, 100);
+    
+    return () => {
+      clearTimeout(timer);
+      isSelectingRef.current = false;
+    };
   }, [selected]);
 
   
@@ -531,13 +582,14 @@ function Model({ modelId, url, position, rotation, scale, selected, onUpdate, on
     if (!selected) {
       console.log(`[${modelId.slice(0,8)}] Not selected, only selecting (no drag yet)`);
       onSelect();
-      try {
-        if (pivotRef.current) {
-          const wc = new THREE.Vector3();
-          pivotRef.current.getWorldPosition(wc);
-          onFocusCenter?.([wc.x, wc.y, wc.z]);
-        }
-      } catch {}
+      // ✅ Camera focus disabled - no auto-shift when selecting model
+      // try {
+      //   if (pivotRef.current) {
+      //     const wc = new THREE.Vector3();
+      //     pivotRef.current.getWorldPosition(wc);
+      //     onFocusCenter?.([wc.x, wc.y, wc.z]);
+      //   }
+      // } catch {}
       
       return;
     }
@@ -567,25 +619,6 @@ function Model({ modelId, url, position, rotation, scale, selected, onUpdate, on
     if (Date.now() < dragEnableAtRef.current) {
       console.log(`[${modelId.slice(0,8)}] Drag blocked by grace period`);
       return;
-    }
-    
-    
-    if (ref.current) {
-      const refPosArr: [number, number, number] = [
-        ref.current.position.x,
-        ref.current.position.y,
-        ref.current.position.z
-      ];
-      const propPosArr: [number, number, number] = [position[0], position[1], position[2]];
-      const lastSynced = lastPropPositionForRefSyncRef.current;
-      const propsMatchLast = lastSynced ? arePositionsClose(propPosArr, lastSynced) : true;
-      const refMatchesProp = arePositionsClose(refPosArr, propPosArr);
-
-      if (!refMatchesProp && propsMatchLast) {
-        commitRefPosition(propPosArr);
-        console.log(`[${modelId.slice(0,8)}] 🔄 SYNC #3 (pre-drag):`,
-          'from:', refPosArr, 'to:', propPosArr);
-      }
     }
     
     try { e.stopPropagation(); } catch {}
@@ -1280,8 +1313,6 @@ function Model({ modelId, url, position, rotation, scale, selected, onUpdate, on
   return (
     <group
       ref={ref}
-      
-      
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
@@ -1449,6 +1480,27 @@ const Overlay3D: React.FC<Overlay3DProps> = ({ mode, layout, onLayoutChange }) =
       return layout.some((m) => m.id === prev) ? prev : null;
     });
   }, [layout, computeStructureSignature]);
+
+  // 🔒 Prevent camera/controls changes when selection changes
+  useEffect(() => {
+    if (!controlsRef.current) return;
+    
+    // Lock controls target when selection changes
+    console.log(`[Overlay3D] Selection changed to: ${selectedId}`);
+    
+    // Prevent OrbitControls from auto-adjusting
+    if (controlsRef.current.target) {
+      const currentTarget = controlsRef.current.target.clone();
+      
+      // Reset target after a microtask to prevent auto-adjustment
+      setTimeout(() => {
+        if (controlsRef.current?.target) {
+          controlsRef.current.target.copy(currentTarget);
+          try { controlsRef.current.update(); } catch {}
+        }
+      }, 0);
+    }
+  }, [selectedId]);
 
   useEffect(() => {
     if (mode === "mobile") {
@@ -1742,13 +1794,7 @@ const Overlay3D: React.FC<Overlay3DProps> = ({ mode, layout, onLayoutChange }) =
                   return next;
                 });
               }}
-              onFocusCenter={(worldCenter) => {
-                lastCentersRef.current.set(m.id, worldCenter);
-                if (controlsRef.current?.target) {
-                  controlsRef.current.target.set(worldCenter[0], worldCenter[1], worldCenter[2]);
-                  try { controlsRef.current.update(); } catch {}
-                }
-              }}
+              onFocusCenter={undefined}
             />
           ))}
           <Preload all />

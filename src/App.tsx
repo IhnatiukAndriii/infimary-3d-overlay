@@ -1,34 +1,24 @@
-import React, { useMemo } from "react";
-import Overlay3D, { ModelData } from "./components/Overlay3D";
-import Gallery from "./components/Gallery";
+import React from "react";
 import { ThemeProvider } from "@mui/material/styles";
 import theme from "./theme";
-import useIsMobile from "./hooks/useIsMobile";
+import CameraOverlay from "./components/CameraOverlay";
+import SvgLibrary from "./components/SvgLibrary";
 import "./styles.css";
 
 const App: React.FC = () => {
-  const isMobile = useIsMobile();
-  const [view, setView] = React.useState<"scene" | "gallery">("scene");
-  const [layout, setLayout] = React.useState<ModelData[]>([]);
-
-  
-  const mode = useMemo(() => (isMobile ? "mobile" : "desktop"), [isMobile]);
+  const [view, setView] = React.useState<"editor" | "library">("editor");
 
   return (
     <ThemeProvider theme={theme}>
       <div className="App">
         <header>
-          <h1>Infirmary Room 3D Overlay</h1>
+          <h1>Infimary SVG Overlay</h1>
           <nav>
-            <button onClick={() => setView("scene")}>3D Scene</button>
-            <button onClick={() => setView("gallery")}>Gallery</button>
+            <button onClick={() => setView("editor")}>Editor</button>
+            <button onClick={() => setView("library")}>SVG Library</button>
           </nav>
         </header>
-        {view === "scene" ? (
-          <Overlay3D mode={mode} layout={layout} onLayoutChange={setLayout} />
-        ) : (
-          <Gallery />
-        )}
+        {view === "editor" ? <CameraOverlay /> : <SvgLibrary />}
       </div>
     </ThemeProvider>
   );
