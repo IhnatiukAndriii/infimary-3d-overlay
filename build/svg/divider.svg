@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="300" height="300" viewBox="0 0 300 300" xmlns="http://www.w3.org/2000/svg">
+  <title>Divider Screen</title>
+  <rect x="0" y="0" width="300" height="300" fill="none"/>
+  <g>
+    <rect x="40" y="40" width="220" height="220" rx="8" ry="8" fill="#E9ECEF" stroke="#ADB5BD" stroke-width="4"/>
+    <line x1="150" y1="40" x2="150" y2="260" stroke="#ADB5BD" stroke-width="4"/>
+    <rect x="55" y="55" width="80" height="190" rx="4" ry="4" fill="#F8F9FA" stroke="#CED4DA"/>
+    <rect x="165" y="55" width="80" height="190" rx="4" ry="4" fill="#F8F9FA" stroke="#CED4DA"/>
+  </g>
+</svg>

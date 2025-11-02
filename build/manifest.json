@@ -1,6 +1,7 @@
 {
-  "short_name": "React App",
-  "name": "Create React App Sample",
+  "short_name": "Infimary 3D",
+  "name": "Infimary 3D Overlay - Medical AR Camera",
+  "description": "Add 3D medical overlays to camera feed for visualization",
   "icons": [
     {
       "src": "favicon.ico",
@@ -10,16 +11,21 @@
     {
       "src": "logo192.png",
       "type": "image/png",
-      "sizes": "192x192"
+      "sizes": "192x192",
+      "purpose": "any maskable"
     },
     {
       "src": "logo512.png",
       "type": "image/png",
-      "sizes": "512x512"
+      "sizes": "512x512",
+      "purpose": "any maskable"
     }
   ],
   "start_url": ".",
   "display": "standalone",
+  "orientation": "portrait",
   "theme_color": "#000000",
-  "background_color": "#ffffff"
+  "background_color": "#000000",
+  "categories": ["medical", "productivity", "utilities"],
+  "screenshots": []
 }
