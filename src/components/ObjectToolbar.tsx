@@ -13,6 +13,11 @@ type ObjectToolbarProps = {
 const ObjectToolbar: React.FC<ObjectToolbarProps> = ({ onAdd, onCapture, onSaveLayout, onLoadLayout, onDeleteSelected, onOpenGallery }) => {
   const [menuOpen, setMenuOpen] = React.useState(false);
   
+  // Debug log
+  React.useEffect(() => {
+    console.log('🔍 Menu state changed:', menuOpen);
+  }, [menuOpen]);
+  
   const DEFAULT_SVGS: Array<{ name: string; path: string }> = [
     { name: "Chair", path: "/svg/chair.svg" },
     { name: "Modern Chair", path: "/svg/SteveLambert-Modern-Chair-3-4-Angle.svg" },
@@ -33,7 +38,15 @@ const ObjectToolbar: React.FC<ObjectToolbarProps> = ({ onAdd, onCapture, onSaveL
       )}
 
       {/* Collapsible Side Menu */}
-      <div className={`objectToolbar__sideMenu ${menuOpen ? 'objectToolbar__sideMenu--open' : ''}`}>
+      <div 
+        className={`objectToolbar__sideMenu ${menuOpen ? 'objectToolbar__sideMenu--open' : ''}`}
+        style={{
+          // Force visibility with inline styles for debugging
+          display: 'flex',
+          visibility: 'visible',
+          pointerEvents: menuOpen ? 'auto' : 'none',
+        }}
+      >
         <button 
           className="objectToolbar__closeBtn"
           onClick={() => setMenuOpen(false)}
