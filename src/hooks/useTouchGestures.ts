@@ -29,7 +29,8 @@ export const useTouchGestures = ({ canvas, enabled = true }: TouchGesturesOption
     };
 
     // Get center point between two touches
-    const getTouchCenter = (touches: TouchList): { x: number; y: number } => {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const _getTouchCenter = (touches: TouchList): { x: number; y: number } => {
       if (touches.length < 2) {
         return { x: touches[0].clientX, y: touches[0].clientY };
       }

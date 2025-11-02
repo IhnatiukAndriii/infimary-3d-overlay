@@ -28,7 +28,6 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>("");
   const [facingMode, setFacingMode] = useState<"user" | "environment">("environment");
   const [svgLibrary, setSvgLibrary] = useState<SvgAsset[]>([]);
-  const [gallery, setGallery] = useState<CapturedPhoto[]>([]);
 
   // Enable touch gestures for mobile
   useTouchGestures({ canvas: fabricRef.current, enabled: true });
@@ -129,13 +128,13 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
   const reloadGallery = useCallback(() => {
     try {
       const raw = localStorage.getItem(GALLERY_STORAGE_KEY);
-      if (!raw) { setGallery([]); return; }
+      if (!raw) { return; }
       const parsed = JSON.parse(raw) as CapturedPhoto[];
-      if (Array.isArray(parsed)) setGallery(parsed);
-      else setGallery([]);
+      if (!Array.isArray(parsed)) {
+        // Invalid data, ignore
+      }
     } catch (e) {
       console.warn("Failed to parse gallery", e);
-      setGallery([]);
     }
   }, []);
 
@@ -150,7 +149,7 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
       window.removeEventListener("svg-library-updated", handleUpdate);
       window.removeEventListener("gallery-updated", handleGallery);
     };
-  }, [reloadSvgLibrary]);
+  }, [reloadSvgLibrary, reloadGallery]);
   
 
   
@@ -158,6 +157,9 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
     let isMounted = true;
     let currentPlayPromise: Promise<void> | null = null;
     cancelPlayRef.current = false;
+    
+    // Capture ref at the start of the effect for cleanup
+    const videoEl = videoRef.current;
 
     const mediaDevices = navigator.mediaDevices;
 
@@ -269,10 +271,9 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
       isMounted = false;
       cancelPlayRef.current = true;
 
-      // Capture current ref values to stable locals for cleanup to satisfy linting and avoid races
+      // Use the stable videoEl captured at effect start
       const finishingPlayPromise = currentPlayPromise;
       const currentStream = streamRef.current;
-      const videoEl = videoRef.current;
 
       const cleanup = async () => {
         if (finishingPlayPromise) {
@@ -293,8 +294,6 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
         }
 
         playPromiseRef.current = null;
-        setVideoReady(false);
-        setCameraError(null);
       };
 
       cleanup();
@@ -897,7 +896,6 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
       const next = [item, ...list].slice(0, 60); // cap at 60 items
       localStorage.setItem(GALLERY_STORAGE_KEY, JSON.stringify(next));
       window.dispatchEvent(new Event("gallery-updated"));
-      setGallery(next);
     } catch (e) {
       console.error("Failed to add to gallery", e);
       alert("Failed to save to gallery.");
