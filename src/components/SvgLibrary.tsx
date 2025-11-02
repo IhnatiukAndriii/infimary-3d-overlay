@@ -66,8 +66,8 @@ const SvgLibrary: React.FC = () => {
       setName("");
       setFile(null);
     } catch (error) {
-      console.error("Failed to read SVG file", error);
-      alert("Не вдалося завантажити SVG. Спробуйте інший файл.");
+  console.error("Failed to read SVG file", error);
+  alert("Failed to load SVG. Please try another file.");
     } finally {
       setIsSaving(false);
     }
@@ -89,10 +89,10 @@ const SvgLibrary: React.FC = () => {
   const handleCopyDataUrl = async (asset: SvgAsset) => {
     try {
       await navigator.clipboard.writeText(asset.dataUrl);
-      alert("Посилання скопійовано до буфера обміну.");
+      alert("Link copied to clipboard.");
     } catch (error) {
       console.warn("Clipboard write failed", error);
-      alert("Не вдалося скопіювати в буфер обміну.");
+      alert("Failed to copy to clipboard.");
     }
   };
 
@@ -105,21 +105,21 @@ const SvgLibrary: React.FC = () => {
       <Card variant="outlined" sx={{ mb: 4 }}>
         <CardContent>
           <Typography variant="h6" sx={{ fontWeight: 600, mb: 1 }}>
-            Додати новий SVG
+            Add new SVG
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            Файл збережеться локально в браузері та буде доступний в редакторі.
+            The file will be stored locally in your browser and available in the editor.
           </Typography>
           <Stack spacing={2} direction={{ xs: "column", sm: "row" }} alignItems="center">
             <TextField
-              label="Назва"
+              label="Name"
               value={name}
               onChange={(event) => setName(event.target.value)}
               size="small"
               sx={{ minWidth: 240 }}
             />
             <Button variant="outlined" component="label" color="warning">
-              Обрати SVG
+              Choose SVG
               <input
                 hidden
                 accept=".svg"
@@ -131,19 +131,19 @@ const SvgLibrary: React.FC = () => {
               />
             </Button>
             <Button variant="contained" onClick={handleAdd} disabled={!canSave}>
-              Зберегти
+              Save
             </Button>
           </Stack>
           {file && (
             <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: "block" }}>
-              Обрано: {file.name}
+              Selected: {file.name}
             </Typography>
           )}
         </CardContent>
       </Card>
 
       {assets.length === 0 ? (
-        <Typography color="text.secondary">Бібліотека поки що порожня. Додайте SVG, щоб почати.</Typography>
+  <Typography color="text.secondary">Library is empty for now. Add an SVG to get started.</Typography>
       ) : (
         <Stack spacing={2}>
           {assets.map((asset) => (
@@ -183,13 +183,13 @@ const SvgLibrary: React.FC = () => {
               </CardContent>
               <CardActions>
                 <Button size="small" onClick={() => handleDownload(asset)}>
-                  Завантажити
+                  Download
                 </Button>
                 <Button size="small" onClick={() => handleCopyDataUrl(asset)}>
-                  Скопіювати Data URL
+                  Copy Data URL
                 </Button>
                 <Button size="small" color="error" onClick={() => handleDelete(asset.id)}>
-                  Видалити
+                  Delete
                 </Button>
               </CardActions>
             </Card>

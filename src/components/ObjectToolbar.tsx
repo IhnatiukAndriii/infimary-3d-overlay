@@ -4,9 +4,15 @@ import "./ObjectToolbar.css";
 type ObjectToolbarProps = {
   onAdd: (type: string, source?: string) => void;
   onCapture: () => void;
+  onSaveLayout: () => void;
+  onLoadLayout: () => void;
+  onDeleteSelected: () => void;
+  onOpenGallery?: () => void;
 };
 
-const ObjectToolbar: React.FC<ObjectToolbarProps> = ({ onAdd, onCapture }) => {
+const ObjectToolbar: React.FC<ObjectToolbarProps> = ({ onAdd, onCapture, onSaveLayout, onLoadLayout, onDeleteSelected, onOpenGallery }) => {
+  const [menuOpen, setMenuOpen] = React.useState(false);
+  
   const DEFAULT_SVGS: Array<{ name: string; path: string }> = [
     { name: "Chair", path: "/svg/chair.svg" },
     { name: "Modern Chair", path: "/svg/SteveLambert-Modern-Chair-3-4-Angle.svg" },
@@ -14,53 +20,143 @@ const ObjectToolbar: React.FC<ObjectToolbarProps> = ({ onAdd, onCapture }) => {
     { name: "Table", path: "/svg/table.svg" },
     { name: "Trolley", path: "/svg/trolley (2).svg" },
     { name: "Window Blinds", path: "/svg/window_blinds.svg" },
+    { name: "Divider", path: "/svg/divider.svg" },
   ];
   return (
-    <div className="objectToolbar">
-      {DEFAULT_SVGS.map((item) => (
-        <button
-          key={item.path}
-          type="button"
-          onClick={() => onAdd("svg", item.path)}
-          title={item.name}
+    <>
+      {/* Backdrop overlay */}
+      {menuOpen && (
+        <div 
+          className="objectToolbar__backdrop"
+          onClick={() => setMenuOpen(false)}
+        />
+      )}
+
+      {/* Collapsible Side Menu */}
+      <div className={`objectToolbar__sideMenu ${menuOpen ? 'objectToolbar__sideMenu--open' : ''}`}>
+        <button 
+          className="objectToolbar__closeBtn"
+          onClick={() => setMenuOpen(false)}
         >
-          {item.name}
+          ✕
         </button>
-      ))}
-      <button type="button" onClick={onCapture}>
-        Capture
-      </button>
+        
+        {/* Object Assets Group */}
+        <div className="objectToolbar__group objectToolbar__group--objects">
+        {DEFAULT_SVGS.map((item) => (
+          <button
+            key={item.path}
+            type="button"
+            className="objectToolbar__btn objectToolbar__btn--object"
+            onClick={() => onAdd("svg", item.path)}
+            title={item.name}
+          >
+            {item.name}
+          </button>
+        ))}
+      </div>
 
-      <label className="objectToolbar__upload">
-        <span>Upload SVG</span>
-        <input
-          type="file"
-          accept=".svg"
-          onChange={(event) => {
-            const file = event.target.files && event.target.files[0];
-            if (!file) return;
-            const url = URL.createObjectURL(file);
-            onAdd("svg", url);
-            event.target.value = "";
-          }}
-        />
-      </label>
+      {/* Upload Group */}
+      <div className="objectToolbar__group objectToolbar__group--upload">
+        <label className="objectToolbar__upload">
+          <span>Upload SVG</span>
+          <input
+            type="file"
+            accept=".svg"
+            onChange={(event) => {
+              const file = event.target.files && event.target.files[0];
+              if (!file) return;
+              const reader = new FileReader();
+              reader.onload = () => {
+                const text = reader.result as string;
+                const dataUrl = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(text);
+                onAdd("svg", dataUrl);
+              };
+              reader.readAsText(file);
+              event.target.value = "";
+            }}
+          />
+        </label>
 
-      <label className="objectToolbar__upload">
-        <span>Upload Image</span>
-        <input
-          type="file"
-          accept="image/*"
-          onChange={(event) => {
-            const file = event.target.files && event.target.files[0];
-            if (!file) return;
-            const url = URL.createObjectURL(file);
-            onAdd("image", url);
-            event.target.value = "";
-          }}
-        />
-      </label>
+        <label className="objectToolbar__upload">
+          <span>Upload Image</span>
+          <input
+            type="file"
+            accept="image/*"
+            onChange={(event) => {
+              const file = event.target.files && event.target.files[0];
+              if (!file) return;
+              const reader = new FileReader();
+              reader.onload = () => {
+                const dataUrl = reader.result as string;
+                onAdd("image", dataUrl);
+              };
+              reader.readAsDataURL(file);
+              event.target.value = "";
+            }}
+          />
+        </label>
+      </div>
+
+      {/* Editing Actions Group */}
+      <div className="objectToolbar__group objectToolbar__group--edit">
+        <button 
+          type="button" 
+          className="objectToolbar__btn objectToolbar__btn--delete"
+          onClick={onDeleteSelected}
+        >
+          Delete Selected
+        </button>
+      </div>
+
+      {/* Layout Management Group */}
+      <div className="objectToolbar__group objectToolbar__group--layout">
+        <button 
+          type="button" 
+          className="objectToolbar__btn objectToolbar__btn--save"
+          onClick={onSaveLayout}
+        >
+          Save Layout
+        </button>
+        <button 
+          type="button" 
+          className="objectToolbar__btn objectToolbar__btn--load"
+          onClick={onLoadLayout}
+        >
+          Load Layout
+        </button>
+      </div>
     </div>
+
+    {/* Bottom Action Bar */}
+    <div className="objectToolbar__bottomBar">
+      <button 
+        className="objectToolbar__menuToggle"
+        onClick={() => setMenuOpen(!menuOpen)}
+      >
+        ☰ Menu
+      </button>
+      
+      <button 
+        type="button" 
+        className="objectToolbar__btn objectToolbar__btn--capture"
+        onClick={onCapture}
+      >
+        📸 Capture
+      </button>
+      
+      <button
+        type="button"
+        className="objectToolbar__btn objectToolbar__btn--gallery"
+        onClick={() => {
+          if (onOpenGallery) onOpenGallery();
+          else window.dispatchEvent(new Event("open-gallery"));
+        }}
+      >
+        🖼️ Gallery
+      </button>
+    </div>
+    </>
   );
 };
 

@@ -4,8 +4,13 @@ import ObjectToolbar from "./ObjectToolbar";
 import PreviewModal from "./PreviewModal";
 import styles from "./CameraOverlay.module.css";
 import { SvgAsset, SVG_LIBRARY_STORAGE_KEY } from "../types/svg";
+import { CapturedPhoto, GALLERY_STORAGE_KEY } from "../types/gallery";
 
-const CameraOverlay: React.FC = () => {
+type CameraOverlayProps = {
+  onOpenGallery?: () => void;
+};
+
+const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const fabricCanvasRef = useRef<HTMLCanvasElement>(null);
   const fabricRef = useRef<fabric.Canvas | null>(null);
@@ -21,6 +26,7 @@ const CameraOverlay: React.FC = () => {
   const [devices, setDevices] = useState<Array<{ label: string; deviceId: string }>>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>("");
   const [svgLibrary, setSvgLibrary] = useState<SvgAsset[]>([]);
+  const [gallery, setGallery] = useState<CapturedPhoto[]>([]);
 
   const updateCanvasSize = useCallback(() => {
     const canvasEl = fabricCanvasRef.current;
@@ -115,12 +121,29 @@ const CameraOverlay: React.FC = () => {
     }
   }, []);
 
+  const reloadGallery = useCallback(() => {
+    try {
+      const raw = localStorage.getItem(GALLERY_STORAGE_KEY);
+      if (!raw) { setGallery([]); return; }
+      const parsed = JSON.parse(raw) as CapturedPhoto[];
+      if (Array.isArray(parsed)) setGallery(parsed);
+      else setGallery([]);
+    } catch (e) {
+      console.warn("Failed to parse gallery", e);
+      setGallery([]);
+    }
+  }, []);
+
   useEffect(() => {
     reloadSvgLibrary();
     const handleUpdate = () => reloadSvgLibrary();
     window.addEventListener("svg-library-updated", handleUpdate);
+    reloadGallery();
+    const handleGallery = () => reloadGallery();
+    window.addEventListener("gallery-updated", handleGallery);
     return () => {
       window.removeEventListener("svg-library-updated", handleUpdate);
+      window.removeEventListener("gallery-updated", handleGallery);
     };
   }, [reloadSvgLibrary]);
   
@@ -312,6 +335,41 @@ const CameraOverlay: React.FC = () => {
       fireRightClick: false,
       fireMiddleClick: false,
       uniformScaling: false,
+    });
+
+    // Custom delete control (X button on top-right)
+    const deleteIcon = "data:image/svg+xml,%3C%3Fxml version='1.0' encoding='utf-8'%3F%3E%3C!DOCTYPE svg PUBLIC '-//W3C//DTD SVG 1.1//EN' 'http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd'%3E%3Csvg version='1.1' id='Ebene_1' xmlns='http://www.w3.org/2000/svg' xmlns:xlink='http://www.w3.org/1999/xlink' x='0px' y='0px' width='595.275px' height='595.275px' viewBox='200 215 230 470' xml:space='preserve'%3E%3Ccircle style='fill:%23F44336;' cx='299.76' cy='439.067' r='218.516'/%3E%3Cg%3E%3Crect x='267.162' y='307.978' transform='matrix(0.7071 -0.7071 0.7071 0.7071 -222.6202 340.6915)' style='fill:white;' width='65.545' height='262.18'/%3E%3Crect x='266.988' y='308.153' transform='matrix(0.7071 0.7071 -0.7071 0.7071 398.3889 -83.3116)' style='fill:white;' width='65.544' height='262.179'/%3E%3C/g%3E%3C/svg%3E";
+    
+    const deleteImg = document.createElement('img');
+    deleteImg.src = deleteIcon;
+
+    function renderDeleteIcon(ctx: CanvasRenderingContext2D, left: number, top: number, styleOverride: any, fabricObject: fabric.Object) {
+      const size = 24;
+      ctx.save();
+      ctx.translate(left, top);
+      ctx.rotate(fabric.util.degreesToRadians(fabricObject.angle || 0));
+      ctx.drawImage(deleteImg, -size/2, -size/2, size, size);
+      ctx.restore();
+    }
+
+    function deleteObject(eventData: MouseEvent, transform: any) {
+      const target = transform.target;
+      const canvas = target.canvas;
+      canvas.remove(target);
+      canvas.requestRenderAll();
+      return true;
+    }
+
+    (fabric.Object.prototype as any).controls.deleteControl = new fabric.Control({
+      x: 0.5,
+      y: -0.5,
+      offsetY: -16,
+      offsetX: 16,
+      cursorStyle: 'pointer',
+      mouseUpHandler: deleteObject,
+      render: renderDeleteIcon,
+      sizeX: 24,
+      sizeY: 24
     });
 
   updateCanvasSize();
@@ -603,7 +661,7 @@ const CameraOverlay: React.FC = () => {
         })
         .catch((error) => {
           console.error("SVG load error", error);
-          alert(`Не вдалося додати SVG (${error}). Перевірте шлях або файл.`);
+          alert(`Could not add SVG (${error}). Please check the path or the file.`);
         })
         .finally(() => {
           if (source.startsWith("blob:")) {
@@ -764,6 +822,96 @@ const CameraOverlay: React.FC = () => {
     });
   }, [videoReady]);
 
+  const addToGallery = useCallback((image: string) => {
+    try {
+      const raw = localStorage.getItem(GALLERY_STORAGE_KEY);
+      const list: CapturedPhoto[] = raw ? JSON.parse(raw) : [];
+      const item: CapturedPhoto = {
+        id: globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`,
+        dataUrl: image,
+        createdAt: Date.now(),
+      };
+      const next = [item, ...list].slice(0, 60); // cap at 60 items
+      localStorage.setItem(GALLERY_STORAGE_KEY, JSON.stringify(next));
+      window.dispatchEvent(new Event("gallery-updated"));
+      setGallery(next);
+    } catch (e) {
+      console.error("Failed to add to gallery", e);
+      alert("Failed to save to gallery.");
+    }
+  }, []);
+
+  const handleSaveLayout = useCallback(() => {
+    if (!fabricRef.current) {
+      alert("Canvas is not ready.");
+      return;
+    }
+    try {
+      const nameDefault = `Layout ${new Date().toLocaleString()}`;
+      const name = window.prompt("Name this layout:", nameDefault) || nameDefault;
+      const json = fabricRef.current.toJSON();
+      const raw = localStorage.getItem("IFM_LAYOUTS");
+      const list = raw ? JSON.parse(raw) : [];
+      list.unshift({ id: Date.now(), name, json, savedAt: Date.now() });
+      localStorage.setItem("IFM_LAYOUTS", JSON.stringify(list.slice(0, 20)));
+      alert("Layout saved locally.");
+    } catch (e) {
+      console.error("Save layout failed", e);
+      alert("Failed to save layout.");
+    }
+  }, []);
+
+  const handleLoadLayout = useCallback(() => {
+    if (!fabricRef.current) {
+      alert("Canvas is not ready.");
+      return;
+    }
+    try {
+      const raw = localStorage.getItem("IFM_LAYOUTS");
+      const list: Array<{ id:number; name:string; json:any; savedAt:number }> = raw ? JSON.parse(raw) : [];
+      if (!list.length) {
+        alert("No saved layouts found.");
+        return;
+      }
+      if (list.length === 1) {
+        fabricRef.current.loadFromJSON(list[0].json, () => {
+          fabricRef.current!.renderAll();
+        });
+        return;
+      }
+      const options = list
+        .slice(0, 10)
+        .map((item, idx) => `${idx + 1}. ${item.name} (${new Date(item.savedAt).toLocaleString()})`)
+        .join("\n");
+      const answer = window.prompt(`Choose a layout to load (enter number):\n${options}`, "1");
+      if (!answer) return;
+      const index = Math.max(1, Math.min(10, parseInt(answer, 10))) - 1;
+      const chosen = list[index] || list[0];
+      fabricRef.current.loadFromJSON(chosen.json, () => {
+        fabricRef.current!.renderAll();
+      });
+    } catch (e) {
+      console.error("Load layout failed", e);
+      alert("Failed to load layout.");
+    }
+  }, []);
+
+  const handleDeleteSelected = useCallback(() => {
+    const canvas = fabricRef.current;
+    if (!canvas) {
+      alert("Canvas is not ready.");
+      return;
+    }
+    const active = canvas.getActiveObject();
+    if (!active) {
+      alert("No object selected.");
+      return;
+    }
+    canvas.remove(active);
+    canvas.discardActiveObject();
+    canvas.requestRenderAll();
+  }, []);
+
   return (
     <div className={styles.screen}>
       <div className={styles.container}>
@@ -784,7 +932,7 @@ const CameraOverlay: React.FC = () => {
         {cameraError && (
           <div className={styles.cameraError}>
             <span>{cameraError}</span>
-            <button className={styles.retryBtn} onClick={handleRetryCamera}>Повторити</button>
+            <button className={styles.retryBtn} onClick={handleRetryCamera}>Retry</button>
             {devices.length > 0 && (
               <div className={styles.devicePicker}>
                 <label htmlFor="deviceSel">Camera:</label>
@@ -793,7 +941,7 @@ const CameraOverlay: React.FC = () => {
                   value={selectedDeviceId}
                   onChange={(e) => setSelectedDeviceId(e.target.value)}
                 >
-                  <option value="">Будь-яка</option>
+                  <option value="">Any</option>
                   {devices.map((d) => (
                     <option key={d.deviceId} value={d.deviceId}>
                       {d.label || `Camera ${d.deviceId.slice(0,6)}`}
@@ -819,12 +967,20 @@ const CameraOverlay: React.FC = () => {
           </div>
         )}
 
-  <ObjectToolbar onAdd={handleAddObject} onCapture={handleCapture} />
+  <ObjectToolbar 
+    onAdd={handleAddObject} 
+    onCapture={handleCapture} 
+    onSaveLayout={handleSaveLayout} 
+    onLoadLayout={handleLoadLayout}
+    onDeleteSelected={handleDeleteSelected}
+    onOpenGallery={onOpenGallery}
+  />
         
         {isPreview && capturedImage && (
           <PreviewModal
             image={capturedImage}
             onClose={() => setIsPreview(false)}
+            onFinalize={(img) => addToGallery(img)}
           />
         )}
       </div>

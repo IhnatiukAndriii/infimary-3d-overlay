@@ -5,10 +5,15 @@ import "./PreviewModal.css";
 type Props = {
   image: string;
   onClose: () => void;
+  onFinalize?: (image: string) => void; // called when user saves
 };
 
-const PreviewModal: React.FC<Props> = ({ image, onClose }) => {
+const PreviewModal: React.FC<Props> = ({ image, onClose, onFinalize }) => {
   const handleSave = () => {
+    // Save to in-app gallery first
+    try {
+      onFinalize?.(image);
+    } catch {}
     
     const link = document.createElement("a");
     link.href = image;
@@ -21,7 +26,7 @@ const PreviewModal: React.FC<Props> = ({ image, onClose }) => {
   const handleShare = async () => {
     
     if (!navigator.share) {
-      alert("Ваш браузер не підтримує функцію Share");
+      alert("Your browser does not support sharing.");
       return;
     }
 
@@ -33,11 +38,11 @@ const PreviewModal: React.FC<Props> = ({ image, onClose }) => {
 
       await navigator.share({
         files: [file],
-        title: "Infimary 3D Overlay",
-        text: "Захоплено з Infimary 3D Overlay",
+        title: "Infimary Overlay",
+        text: "Captured with Infimary Overlay",
       });
     } catch (error) {
-      console.error("Помилка при спробі поділитися:", error);
+      console.error("Error while sharing:", error);
     }
   };
 
@@ -48,7 +53,7 @@ const PreviewModal: React.FC<Props> = ({ image, onClose }) => {
       </DialogContent>
       <DialogActions>
         <Button onClick={onClose}>Cancel</Button>
-        <Button color="primary" onClick={handleSave}>Save</Button>
+        <Button color="primary" onClick={handleSave}>Save Photo</Button>
         <Button color="primary" onClick={handleShare}>Share</Button>
       </DialogActions>
     </Dialog>
