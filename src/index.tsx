@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client';
 import './index.css';
 import App from './App';
 import reportWebVitals from './reportWebVitals';
+import * as serviceWorkerRegistration from './serviceWorkerRegistration';
 
 
 
@@ -84,5 +85,18 @@ const root = ReactDOM.createRoot(
 );
 
 root.render(<App />);
+
+// Register service worker for offline support
+serviceWorkerRegistration.register({
+  onSuccess: () => console.log('PWA installed successfully!'),
+  onUpdate: (registration) => {
+    console.log('New version available! Refresh to update.');
+    // Optionally auto-update
+    if (registration.waiting) {
+      registration.waiting.postMessage({ type: 'SKIP_WAITING' });
+      window.location.reload();
+    }
+  }
+});
 
 reportWebVitals();

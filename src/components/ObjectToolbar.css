@@ -81,7 +81,9 @@
 .objectToolbar__menuToggle {
   border: none;
   border-radius: 10px;
-  padding: 12px 20px;
+  padding: 14px 22px;
+  min-height: 48px;
+  min-width: 48px;
   font-weight: 600;
   font-size: 16px;
   cursor: pointer;
@@ -89,11 +91,17 @@
   color: white;
   transition: transform 0.2s ease, box-shadow 0.2s ease;
   box-shadow: 0 4px 12px rgba(96, 125, 139, 0.3);
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .objectToolbar__menuToggle:hover {
   transform: translateY(-2px);
   box-shadow: 0 6px 16px rgba(96, 125, 139, 0.4);
+}
+
+.objectToolbar__menuToggle:active {
+  transform: translateY(0);
 }
 
 .objectToolbar {
@@ -149,7 +157,9 @@
 .objectToolbar button {
   border: none;
   border-radius: 8px;
-  padding: 10px 16px;
+  padding: 12px 18px;
+  min-height: 44px;
+  min-width: 44px;
   font-weight: 600;
   font-size: 14px;
   cursor: pointer;
@@ -157,12 +167,19 @@
   color: #2f2f2f;
   transition: transform 0.2s ease, box-shadow 0.2s ease;
   white-space: nowrap;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .objectToolbar__btn:hover,
 .objectToolbar button:hover {
   transform: translateY(-2px);
   box-shadow: 0 8px 18px rgba(255, 152, 0, 0.35);
+}
+
+.objectToolbar__btn:active,
+.objectToolbar button:active {
+  transform: translateY(0);
 }
 
 .objectToolbar__btn--object {
@@ -185,7 +202,8 @@
   background: linear-gradient(135deg, #4caf50 0%, #388e3c 100%);
   color: white;
   font-size: 16px;
-  padding: 12px 20px;
+  padding: 14px 22px;
+  min-height: 48px;
   flex: 1;
   min-width: 140px;
 }
@@ -199,13 +217,16 @@
   position: relative;
   overflow: hidden;
   border-radius: 8px;
-  padding: 10px 16px;
+  padding: 12px 18px;
+  min-height: 44px;
   background: linear-gradient(135deg, #2196f3 0%, #1976d2 100%);
   color: white;
   font-weight: 600;
   font-size: 14px;
   cursor: pointer;
   transition: transform 0.2s ease, box-shadow 0.2s ease;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .objectToolbar__upload:hover {
@@ -229,42 +250,52 @@
 
 @media (max-width: 600px) {
   .objectToolbar__sideMenu {
-    width: 260px;
-    left: -280px;
+    width: 280px;
+    left: -300px;
+    padding: 20px 16px;
   }
   
   .objectToolbar__bottomBar {
-    gap: 8px;
-    padding: 10px 12px;
+    gap: 10px;
+    padding: 12px 16px;
   }
 
   .objectToolbar__menuToggle {
-    padding: 10px 16px;
-    font-size: 14px;
+    padding: 14px 20px;
+    font-size: 15px;
+    min-height: 50px;
   }
 
   .objectToolbar {
-    gap: 6px;
-    padding: 12px;
+    gap: 10px;
+    padding: 16px;
     max-height: 50vh;
   }
 
   .objectToolbar__group {
-    gap: 6px;
-    padding: 6px;
+    gap: 10px;
+    padding: 10px;
   }
 
   .objectToolbar__btn,
   .objectToolbar button,
   .objectToolbar__upload {
-    padding: 8px 12px;
-    font-size: 13px;
+    padding: 12px 16px;
+    font-size: 14px;
+    min-height: 48px;
   }
 
   .objectToolbar__btn--capture,
   .objectToolbar__btn--gallery {
-    font-size: 14px;
-    padding: 10px 14px;
-    min-width: 100px;
+    font-size: 15px;
+    padding: 14px 18px;
+    min-width: 120px;
+    min-height: 50px;
+  }
+  
+  .objectToolbar__closeBtn {
+    width: 44px;
+    height: 44px;
+    font-size: 22px;
   }
 }

@@ -5,6 +5,7 @@ import PreviewModal from "./PreviewModal";
 import styles from "./CameraOverlay.module.css";
 import { SvgAsset, SVG_LIBRARY_STORAGE_KEY } from "../types/svg";
 import { CapturedPhoto, GALLERY_STORAGE_KEY } from "../types/gallery";
+import { useTouchGestures } from "../hooks/useTouchGestures";
 
 type CameraOverlayProps = {
   onOpenGallery?: () => void;
@@ -25,8 +26,12 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
   const [restartTick, setRestartTick] = useState<number>(0);
   const [devices, setDevices] = useState<Array<{ label: string; deviceId: string }>>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>("");
+  const [facingMode, setFacingMode] = useState<"user" | "environment">("environment");
   const [svgLibrary, setSvgLibrary] = useState<SvgAsset[]>([]);
   const [gallery, setGallery] = useState<CapturedPhoto[]>([]);
+
+  // Enable touch gestures for mobile
+  useTouchGestures({ canvas: fabricRef.current, enabled: true });
 
   const updateCanvasSize = useCallback(() => {
     const canvasEl = fabricCanvasRef.current;
@@ -171,7 +176,11 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
         const stream = await mediaDevices.getUserMedia({
           video: selectedDeviceId 
             ? { deviceId: { exact: selectedDeviceId } }
-            : { facingMode: "environment", width: { ideal: 1920 }, height: { ideal: 1080 } },
+            : { 
+                facingMode: facingMode, 
+                width: { ideal: 1920, max: 1920 }, 
+                height: { ideal: 1080, max: 1080 }
+              },
           audio: false
         });
 
@@ -290,11 +299,16 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
 
       cleanup();
     };
-  }, [restartTick, selectedDeviceId]);
+  }, [restartTick, selectedDeviceId, facingMode]);
 
   
 
   const handleRetryCamera = () => setRestartTick((n) => n + 1);
+  
+  const handleSwitchCamera = useCallback(() => {
+    setFacingMode(prev => prev === "environment" ? "user" : "environment");
+    setRestartTick((n) => n + 1);
+  }, []);
 
   
   useEffect(() => {
@@ -335,6 +349,9 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
       fireRightClick: false,
       fireMiddleClick: false,
       uniformScaling: false,
+      // Performance optimizations
+      perPixelTargetFind: false,
+      targetFindTolerance: 4,
     });
 
     // Custom delete control (X button on top-right)
@@ -380,20 +397,44 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
       ctx.imageSmoothingEnabled = false;
     }
 
+    // Performance: throttled render during transformations
+    let isTransforming = false;
+    let rafId: number | null = null;
+
+    function throttledRender() {
+      if (rafId) return;
+      rafId = requestAnimationFrame(() => {
+        fabricRef.current?.renderAll();
+        rafId = null;
+      });
+    }
+
+    // Optimized event handlers
+    canvas.on("object:added", () => fabricRef.current?.requestRenderAll());
+    canvas.on("object:removed", () => fabricRef.current?.requestRenderAll());
     
+    canvas.on("object:moving", () => {
+      isTransforming = true;
+      throttledRender();
+    });
+    canvas.on("object:scaling", throttledRender);
+    canvas.on("object:rotating", throttledRender);
     
-    canvas.on("object:added", () => fabricRef.current?.renderAll());
-    canvas.on("object:removed", () => fabricRef.current?.renderAll());
     canvas.on("object:modified", () => {
-      setTimeout(() => fabricRef.current?.renderAll(), 0);
+      isTransforming = false;
+      fabricRef.current?.requestRenderAll();
     });
-    canvas.on("mouse:down", () => {});
+    
     canvas.on("mouse:up", () => {
-      setTimeout(() => fabricRef.current?.renderAll(), 0);
+      if (isTransforming) {
+        isTransforming = false;
+        fabricRef.current?.requestRenderAll();
+      }
     });
-    canvas.on("selection:created", () => fabricRef.current?.renderAll());
-    canvas.on("selection:cleared", () => fabricRef.current?.renderAll());
-    canvas.on("selection:updated", () => fabricRef.current?.renderAll());
+    
+    canvas.on("selection:created", () => fabricRef.current?.requestRenderAll());
+    canvas.on("selection:cleared", () => fabricRef.current?.requestRenderAll());
+    canvas.on("selection:updated", () => fabricRef.current?.requestRenderAll());
     
     
     
@@ -438,6 +479,10 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
   const handleAddObject = useCallback((type: string, imageSrc?: string) => {
     if (!fabricRef.current) return;
     
+    // Detect mobile device
+    const isMobile = window.innerWidth <= 768;
+    const scaleFactor = isMobile ? 0.6 : 1.0;
+    
     const shadowConfig = new fabric.Shadow({
       color: 'rgba(0,0,0,0.5)',
       blur: 20,
@@ -450,8 +495,8 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
         left: 100,
         top: 100,
         fill: "rgba(255, 215, 0, 0.85)",
-        width: 80,
-        height: 40,
+        width: 80 * scaleFactor,
+        height: 40 * scaleFactor,
         stroke: "rgba(255, 255, 255, 0.9)",
         strokeWidth: 3,
         rx: 5,
@@ -464,6 +509,9 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
       fabricRef.current.setActiveObject(obj);
       fabricRef.current.renderAll();
     } else if (type === "image" && imageSrc) {
+      const isMobile = window.innerWidth <= 768;
+      const scaleFactor = isMobile ? 0.3 : 0.4;
+      
       fabric.Image.fromURL(imageSrc, (img) => {
         // Try to remove white/black background via RemoveColor filters (if available)
         try {
@@ -480,15 +528,19 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
         img.set({
           left: 120,
           top: 120,
-          scaleX: 0.4,
-          scaleY: 0.4,
+          scaleX: scaleFactor,
+          scaleY: scaleFactor,
           shadow: shadowConfig,
           opacity: 0.95,
           cornerStyle: 'circle' as const,
+          objectCaching: true,
+          statefullCache: true,
+          noScaleCache: false,
+          cacheProperties: ['fill', 'stroke', 'strokeWidth', 'strokeDashArray', 'width', 'height'],
         });
         fabricRef.current!.add(img);
         fabricRef.current!.setActiveObject(img);
-        fabricRef.current!.renderAll();
+        fabricRef.current!.requestRenderAll();
         if (imageSrc.startsWith("blob:")) {
           URL.revokeObjectURL(imageSrc);
         }
@@ -614,20 +666,24 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
                     shadow: shadowConfig,
                     opacity: 0.95,
                     cornerStyle: 'circle' as const,
+                    objectCaching: true,
+                    statefullCache: true,
+                    noScaleCache: false,
                   });
 
                   const iw = img.width ?? 0;
                   const ih = img.height ?? 0;
                   const maxDim = Math.max(iw, ih);
                   if (maxDim > 0) {
-                    const target = 200;
+                    const isMobile = window.innerWidth <= 768;
+                    const target = isMobile ? 150 : 200;
                     const factor = Math.min(1, target / maxDim);
                     img.scale(factor);
                   }
 
                   fabricRef.current!.add(img);
                   fabricRef.current!.setActiveObject(img);
-                  fabricRef.current!.renderAll();
+                  fabricRef.current!.requestRenderAll();
                 }, { crossOrigin: 'anonymous' });
                 return; // Skip vector add path, we've added rasterized image instead
               }
@@ -643,20 +699,24 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
               shadow: shadowConfig,
               opacity: 0.95,
               cornerStyle: 'circle' as const,
+              objectCaching: true,
+              statefullCache: true,
+              noScaleCache: false,
             });
 
             const width = grouped.width ?? 0;
             const height = grouped.height ?? 0;
             const maxDim = Math.max(width, height);
             if (maxDim > 0) {
-              const target = 200;
+              const isMobile = window.innerWidth <= 768;
+              const target = isMobile ? 150 : 200;
               const factor = Math.min(1, target / maxDim);
               grouped.scale(factor);
             }
 
             fabricRef.current!.add(grouped);
             fabricRef.current!.setActiveObject(grouped);
-            fabricRef.current!.renderAll();
+            fabricRef.current!.requestRenderAll();
           });
         })
         .catch((error) => {
@@ -669,11 +729,14 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
           }
         });
     } else if (type === "circle") {
+      const isMobile = window.innerWidth <= 768;
+      const radius = isMobile ? 20 : 30;
+      
       const obj = new fabric.Circle({
         left: 100,
         top: 100,
         fill: "rgba(135, 206, 250, 0.85)",
-        radius: 30,
+        radius: radius,
         stroke: "rgba(255, 255, 255, 0.9)",
         strokeWidth: 3,
         shadow: shadowConfig,
@@ -951,6 +1014,17 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
               </div>
             )}
           </div>
+        )}
+        
+        {/* Camera switch button for mobile */}
+        {videoReady && !cameraError && (
+          <button 
+            className={styles.switchCameraBtn}
+            onClick={handleSwitchCamera}
+            title="Switch Camera"
+          >
+            🔄
+          </button>
         )}
         
         {svgLibrary.length > 0 && (
