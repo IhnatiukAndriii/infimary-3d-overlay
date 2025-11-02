@@ -8,6 +8,11 @@
   background: rgba(0, 0, 0, 0.4);
   z-index: 90;
   animation: fadeIn 0.3s ease;
+  /* Mobile optimization */
+  -webkit-transform: translate3d(0, 0, 0);
+  transform: translate3d(0, 0, 0);
+  -webkit-backface-visibility: hidden;
+  backface-visibility: hidden;
 }
 
 @keyframes fadeIn {
@@ -30,10 +35,17 @@
   z-index: 100;
   transition: left 0.3s ease;
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
   padding: 16px;
   display: flex;
   flex-direction: column;
   gap: 12px;
+  /* Mobile optimization - hardware acceleration */
+  -webkit-transform: translate3d(0, 0, 0);
+  transform: translate3d(0, 0, 0);
+  -webkit-backface-visibility: hidden;
+  backface-visibility: hidden;
+  will-change: left;
 }
 
 .objectToolbar__sideMenu--open {
@@ -76,6 +88,11 @@
   z-index: 50;
   align-items: center;
   justify-content: center;
+  /* Mobile optimization */
+  -webkit-transform: translate3d(0, 0, 0);
+  transform: translate3d(0, 0, 0);
+  -webkit-backface-visibility: hidden;
+  backface-visibility: hidden;
 }
 
 .objectToolbar__menuToggle {
