@@ -1,5 +1,6 @@
 import React from "react";
 import { Dialog, DialogActions, DialogContent, Button } from "@mui/material";
+import "./PreviewModal.css";
 
 type Props = {
   image: string;
@@ -43,7 +44,7 @@ const PreviewModal: React.FC<Props> = ({ image, onClose }) => {
   return (
     <Dialog open onClose={onClose}>
       <DialogContent>
-        <img src={image} alt="Preview" style={{ maxWidth: "100%" }} />
+        <img src={image} alt="Preview" className="previewImg" />
       </DialogContent>
       <DialogActions>
         <Button onClick={onClose}>Cancel</Button>

@@ -407,6 +407,18 @@ const CameraOverlay: React.FC = () => {
       fabricRef.current.renderAll();
     } else if (type === "image" && imageSrc) {
       fabric.Image.fromURL(imageSrc, (img) => {
+        // Try to remove white/black background via RemoveColor filters (if available)
+        try {
+          const Filters: any = (fabric.Image as any).filters;
+          const hasRemove = Filters && typeof Filters.RemoveColor === 'function';
+          if (hasRemove) {
+            const white = new Filters.RemoveColor({ color: '#ffffff', distance: 0.2 });
+            const black = new Filters.RemoveColor({ color: '#000000', distance: 0.2 });
+            img.filters = [white, black];
+            (img as any).applyFilters?.();
+          }
+        } catch {}
+
         img.set({
           left: 120,
           top: 120,
@@ -425,10 +437,144 @@ const CameraOverlay: React.FC = () => {
       }, { crossOrigin: "anonymous" });
     } else if (type === "svg" && imageSrc) {
       const source = imageSrc;
-      fetch(source)
-        .then((response) => response.text())
+      const urlToFetch = /^data:|^blob:/i.test(source) ? source : encodeURI(source);
+      fetch(urlToFetch)
+        .then((response) => {
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status} while fetching ${urlToFetch}`);
+          }
+          return response.text();
+        })
         .then((svgText) => {
           fabric.loadSVGFromString(svgText, (objects, options) => {
+            // Heuristic: drop giant white/black (and near-white/near-black) background shapes before grouping
+            try {
+              const toColorString = (fill: any) => (typeof fill === 'string' ? String(fill).toLowerCase() : '');
+              const parseRGB = (fill: any): {r:number;g:number;b:number}|null => {
+                try {
+                  if (!fill || typeof fill !== 'string') return null;
+                  const f = toColorString(fill).trim();
+                  // Named colors
+                  if (f === 'white') return { r:255, g:255, b:255 };
+                  if (f === 'black') return { r:0, g:0, b:0 };
+                  // #rgb or #rrggbb
+                  if (/^#([0-9a-f]{3}){1,2}$/i.test(f)) {
+                    let r:number, g:number, b:number;
+                    if (f.length === 4) {
+                      r = parseInt(f[1]+f[1],16);
+                      g = parseInt(f[2]+f[2],16);
+                      b = parseInt(f[3]+f[3],16);
+                    } else {
+                      r = parseInt(f.slice(1,3),16);
+                      g = parseInt(f.slice(3,5),16);
+                      b = parseInt(f.slice(5,7),16);
+                    }
+                    return { r,g,b };
+                  }
+                  // rgb(a)
+                  const m = f.match(/^rgba?\((\d+)\s*,\s*(\d+)\s*,\s*(\d+)/);
+                  if (m) return { r: +m[1], g: +m[2], b: +m[3] };
+                } catch {}
+                return null;
+              };
+              const isNearWhiteOrBlack = (fill: any) => {
+                const fstr = toColorString(fill).replace(/\s+/g, '');
+                if (
+                  fstr === '#fff' || fstr === '#ffffff' || fstr === 'white' || fstr === 'rgb(255,255,255)' ||
+                  fstr === '#000' || fstr === '#000000' || fstr === 'black' || fstr === 'rgb(0,0,0)'
+                ) return true;
+                const rgb = parseRGB(fill);
+                if (!rgb) return false;
+                const nearWhite = rgb.r >= 245 && rgb.g >= 245 && rgb.b >= 245;
+                const nearBlack = rgb.r <= 12 && rgb.g <= 12 && rgb.b <= 12;
+                return nearWhite || nearBlack;
+              };
+
+              // Compute overall bounding box across all objects
+              let minX = Number.POSITIVE_INFINITY;
+              let minY = Number.POSITIVE_INFINITY;
+              let maxX = Number.NEGATIVE_INFINITY;
+              let maxY = Number.NEGATIVE_INFINITY;
+              const getBR = (o: any) => (typeof o.getBoundingRect === 'function'
+                ? o.getBoundingRect(true, true)
+                : { left: o.left || 0, top: o.top || 0, width: (o.width || 0) * (o.scaleX || 1), height: (o.height || 0) * (o.scaleY || 1) });
+              (objects as any[]).forEach(o => {
+                const br = getBR(o);
+                minX = Math.min(minX, br.left);
+                minY = Math.min(minY, br.top);
+                maxX = Math.max(maxX, br.left + br.width);
+                maxY = Math.max(maxY, br.top + br.height);
+              });
+              const globalW = Math.max(1, maxX - minX);
+              const globalH = Math.max(1, maxY - minY);
+              const globalA = globalW * globalH;
+
+              const filtered = (objects as any[]).filter((o) => {
+                if (!o) return false;
+                // Only consider likely background primitives
+                const typeOk = o.type === 'rect' || o.type === 'path' || o.type === 'polygon' || o.type === 'ellipse' || o.type === 'circle';
+                if (typeOk && isNearWhiteOrBlack((o as any).fill)) {
+                  const br = getBR(o);
+                  const coverW = br.width / globalW;
+                  const coverH = br.height / globalH;
+                  const areaFrac = (br.width * br.height) / globalA;
+                  const coversAlmostAll = (coverW >= 0.9 && coverH >= 0.9) || areaFrac >= 0.82;
+                  if (coversAlmostAll) {
+                    return false; // drop background
+                  }
+                }
+                return true; // keep
+              });
+              objects = filtered as any;
+
+              // If there are internal pure-black fills left, prefer raster fallback with RemoveColor to clear holes
+              const hasPureBlackFill = (fill: any) => {
+                const rgb = parseRGB(fill);
+                return !!rgb && rgb.r <= 5 && rgb.g <= 5 && rgb.b <= 5;
+              };
+              const needsRasterBlackRemoval = (objects as any[]).some((o) => {
+                const f = (o as any).fill;
+                if (!f || f === 'none') return false;
+                return hasPureBlackFill(f);
+              });
+
+              if (needsRasterBlackRemoval) {
+                const svgDataUrl = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgText);
+                fabric.Image.fromURL(svgDataUrl, (img) => {
+                  try {
+                    const Filters: any = (fabric.Image as any).filters;
+                    if (Filters && typeof Filters.RemoveColor === 'function') {
+                      const black = new Filters.RemoveColor({ color: '#000000', distance: 0.12 });
+                      img.filters = [black];
+                      (img as any).applyFilters?.();
+                    }
+                  } catch {}
+
+                  img.set({
+                    left: 140,
+                    top: 140,
+                    shadow: shadowConfig,
+                    opacity: 0.95,
+                    cornerStyle: 'circle' as const,
+                  });
+
+                  const iw = img.width ?? 0;
+                  const ih = img.height ?? 0;
+                  const maxDim = Math.max(iw, ih);
+                  if (maxDim > 0) {
+                    const target = 200;
+                    const factor = Math.min(1, target / maxDim);
+                    img.scale(factor);
+                  }
+
+                  fabricRef.current!.add(img);
+                  fabricRef.current!.setActiveObject(img);
+                  fabricRef.current!.renderAll();
+                }, { crossOrigin: 'anonymous' });
+                return; // Skip vector add path, we've added rasterized image instead
+              }
+            } catch {}
+
             const grouped = fabric.util.groupSVGElements(
               objects as fabric.Object[],
               options || {}
@@ -457,7 +603,7 @@ const CameraOverlay: React.FC = () => {
         })
         .catch((error) => {
           console.error("SVG load error", error);
-          alert("Не вдалося додати SVG. Переконайтеся, що файл коректний.");
+          alert(`Не вдалося додати SVG (${error}). Перевірте шлях або файл.`);
         })
         .finally(() => {
           if (source.startsWith("blob:")) {

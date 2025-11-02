@@ -7,14 +7,26 @@ type ObjectToolbarProps = {
 };
 
 const ObjectToolbar: React.FC<ObjectToolbarProps> = ({ onAdd, onCapture }) => {
+  const DEFAULT_SVGS: Array<{ name: string; path: string }> = [
+    { name: "Chair", path: "/svg/chair.svg" },
+    { name: "Modern Chair", path: "/svg/SteveLambert-Modern-Chair-3-4-Angle.svg" },
+    { name: "Hospital Bed", path: "/svg/hospital-bed-svg-small.svg" },
+    { name: "Table", path: "/svg/table.svg" },
+    { name: "Trolley", path: "/svg/trolley (2).svg" },
+    { name: "Window Blinds", path: "/svg/window_blinds.svg" },
+  ];
   return (
     <div className="objectToolbar">
-      <button type="button" onClick={() => onAdd("rect")}>
-        Rectangle
-      </button>
-      <button type="button" onClick={() => onAdd("circle")}>
-        Circle
-      </button>
+      {DEFAULT_SVGS.map((item) => (
+        <button
+          key={item.path}
+          type="button"
+          onClick={() => onAdd("svg", item.path)}
+          title={item.name}
+        >
+          {item.name}
+        </button>
+      ))}
       <button type="button" onClick={onCapture}>
         Capture
       </button>
