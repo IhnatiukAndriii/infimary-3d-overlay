@@ -47,5 +47,8 @@
   },
   "devDependencies": {
     "@types/fabric": "^5.3.10"
+  },
+  "engines": {
+    "node": "18.x"
   }
 }
