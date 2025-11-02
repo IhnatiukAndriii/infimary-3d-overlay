@@ -27,7 +27,8 @@
 .objectToolbar__sideMenu {
   position: fixed;
   top: 0;
-  left: 0;
+  /* Start completely off screen to the left */
+  left: -100vw;
   bottom: 0;
   width: 280px;
   max-width: 85vw;
@@ -38,25 +39,23 @@
   -webkit-overflow-scrolling: touch;
   padding: 16px;
   padding-bottom: 80px;
-  display: flex;
+  display: flex !important;
   flex-direction: column;
   gap: 12px;
-  /* Mobile optimization - use transform instead of left for better performance */
-  transform: translateX(-100%);
-  -webkit-transform: translateX(-100%);
-  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  -webkit-transition: -webkit-transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  /* Smooth animation */
+  transition: left 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   -webkit-backface-visibility: hidden;
   backface-visibility: hidden;
-  will-change: transform;
-  /* Debug - temporary visible border */
-  border-right: 3px solid #ff0000;
+  will-change: left;
+  /* Debug - visible border */
+  border-right: 5px solid #ff0000;
+  /* Force on top */
+  pointer-events: auto;
 }
 
 .objectToolbar__sideMenu--open {
-  transform: translateX(0);
-  -webkit-transform: translateX(0);
-  /* Debug */
+  /* Bring INTO view */
+  left: 0 !important;
   box-shadow: 4px 0 30px rgba(0, 0, 0, 0.4);
 }
 
@@ -280,6 +279,12 @@
     max-width: 80vw;
     padding: 16px;
     padding-bottom: 100px;
+    /* Ensure it starts off screen */
+    left: -100vw;
+  }
+  
+  .objectToolbar__sideMenu--open {
+    left: 0 !important;
   }
   
   .objectToolbar__bottomBar {

@@ -40,12 +40,7 @@ const ObjectToolbar: React.FC<ObjectToolbarProps> = ({ onAdd, onCapture, onSaveL
       {/* Collapsible Side Menu */}
       <div 
         className={`objectToolbar__sideMenu ${menuOpen ? 'objectToolbar__sideMenu--open' : ''}`}
-        style={{
-          // Force visibility with inline styles for debugging
-          display: 'flex',
-          visibility: 'visible',
-          pointerEvents: menuOpen ? 'auto' : 'none',
-        }}
+        data-menu-open={menuOpen}
       >
         <button 
           className="objectToolbar__closeBtn"
