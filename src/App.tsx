@@ -19,10 +19,10 @@ const App: React.FC = () => {
     <ThemeProvider theme={theme}>
       <div className="App">
         <header>
-          <h1>Infimary SVG Overlay</h1>
+          <h1>Infimary Overlay</h1>
           <nav>
             <button onClick={() => setView("editor")}>Editor</button>
-            <button onClick={() => setView("library")}>SVG Library</button>
+            <button onClick={() => setView("library")}>Image Library</button>
             <button onClick={() => setView("gallery")}>Gallery</button>
           </nav>
         </header>

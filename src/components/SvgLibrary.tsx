@@ -80,7 +80,11 @@ const SvgLibrary: React.FC = () => {
   const handleDownload = (asset: SvgAsset) => {
     const link = document.createElement("a");
     link.href = asset.dataUrl;
-    link.download = `${asset.name.replace(/\s+/g, "-")}.svg`;
+    // Detect file type from data URL
+    let ext = '.svg';
+    if (asset.dataUrl.startsWith('data:image/png')) ext = '.png';
+    else if (asset.dataUrl.startsWith('data:image/jpeg') || asset.dataUrl.startsWith('data:image/jpg')) ext = '.jpg';
+    link.download = `${asset.name.replace(/\s+/g, "-")}${ext}`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -99,16 +103,16 @@ const SvgLibrary: React.FC = () => {
   return (
     <Box sx={{ p: 3 }}>
       <Typography variant="h4" sx={{ fontWeight: 700, mb: 3 }}>
-        SVG Library
+        Image Library
       </Typography>
 
       <Card variant="outlined" sx={{ mb: 4 }}>
         <CardContent>
           <Typography variant="h6" sx={{ fontWeight: 600, mb: 1 }}>
-            Add new SVG
+            Add new Image
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            The file will be stored locally in your browser and available in the editor.
+            Upload SVG, PNG, or JPG files. They will be stored locally in your browser and available in the editor.
           </Typography>
           <Stack spacing={2} direction={{ xs: "column", sm: "row" }} alignItems="center">
             <TextField
@@ -119,10 +123,10 @@ const SvgLibrary: React.FC = () => {
               sx={{ minWidth: 240 }}
             />
             <Button variant="outlined" component="label" color="warning">
-              Choose SVG
+              Choose Image
               <input
                 hidden
-                accept=".svg"
+                accept=".svg,.png,.jpg,.jpeg"
                 type="file"
                 onChange={(event) => {
                   const selected = event.target.files && event.target.files[0];
@@ -136,14 +140,14 @@ const SvgLibrary: React.FC = () => {
           </Stack>
           {file && (
             <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: "block" }}>
-              Selected: {file.name}
+              Selected: {file.name} ({file.type || 'unknown type'})
             </Typography>
           )}
         </CardContent>
       </Card>
 
       {assets.length === 0 ? (
-  <Typography color="text.secondary">Library is empty for now. Add an SVG to get started.</Typography>
+  <Typography color="text.secondary">Library is empty for now. Add an image (SVG, PNG, or JPG) to get started.</Typography>
       ) : (
         <Stack spacing={2}>
           {assets.map((asset) => (

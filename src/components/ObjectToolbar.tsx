@@ -27,6 +27,14 @@ const ObjectToolbar: React.FC<ObjectToolbarProps> = ({ onAdd, onCapture, onSaveL
     { name: "Window Blinds", path: "/svg/window_blinds.svg" },
     { name: "Divider", path: "/svg/divider.svg" },
   ];
+
+  const DEFAULT_IMAGES: Array<{ name: string; path: string; type: 'svg' | 'image' }> = [
+    { name: "🧊 Mini Fridge", path: "/images/mini-fridge.svg", type: 'svg' },
+    { name: "💨 Air Purifier", path: "/images/air-purifier.svg", type: 'svg' },
+    { name: "🛏️ Hospital Bed 1", path: "/images/hospital-bed-1.svg", type: 'svg' },
+    { name: "🛏️ Hospital Bed 2", path: "/images/hospital-bed-2.svg", type: 'svg' },
+    { name: "⚕️ Oxygen Cylinder", path: "/images/oxygen-cylinder.svg", type: 'svg' },
+  ];
   return (
     <>
       {/* Backdrop overlay */}
@@ -51,6 +59,7 @@ const ObjectToolbar: React.FC<ObjectToolbarProps> = ({ onAdd, onCapture, onSaveL
         
         {/* Object Assets Group */}
         <div className="objectToolbar__group objectToolbar__group--objects">
+        <div className="objectToolbar__subheader">SVG Objects</div>
         {DEFAULT_SVGS.map((item) => (
           <button
             key={item.path}
@@ -62,12 +71,25 @@ const ObjectToolbar: React.FC<ObjectToolbarProps> = ({ onAdd, onCapture, onSaveL
             {item.name}
           </button>
         ))}
+        
+        <div className="objectToolbar__subheader">Medical Equipment (PNG)</div>
+        {DEFAULT_IMAGES.map((item) => (
+          <button
+            key={item.path}
+            type="button"
+            className="objectToolbar__btn objectToolbar__btn--object objectToolbar__btn--image"
+            onClick={() => onAdd(item.type, item.path)}
+            title={item.name}
+          >
+            {item.name}
+          </button>
+        ))}
       </div>
 
       {/* Upload Group */}
       <div className="objectToolbar__group objectToolbar__group--upload">
         <label className="objectToolbar__upload">
-          <span>Upload SVG</span>
+          <span>📄 Upload SVG</span>
           <input
             type="file"
             accept=".svg"
@@ -87,10 +109,10 @@ const ObjectToolbar: React.FC<ObjectToolbarProps> = ({ onAdd, onCapture, onSaveL
         </label>
 
         <label className="objectToolbar__upload">
-          <span>Upload Image</span>
+          <span>🖼️ Upload PNG/JPG</span>
           <input
             type="file"
-            accept="image/*"
+            accept="image/png,image/jpeg,image/jpg"
             onChange={(event) => {
               const file = event.target.files && event.target.files[0];
               if (!file) return;
@@ -119,19 +141,34 @@ const ObjectToolbar: React.FC<ObjectToolbarProps> = ({ onAdd, onCapture, onSaveL
 
       {/* Layout Management Group */}
       <div className="objectToolbar__group objectToolbar__group--layout">
+        <div className="objectToolbar__subheader">💾 Layout Management</div>
         <button 
           type="button" 
           className="objectToolbar__btn objectToolbar__btn--save"
           onClick={onSaveLayout}
+          title="Save current layout to browser storage"
         >
-          Save Layout
+          💾 Save Layout
         </button>
         <button 
           type="button" 
           className="objectToolbar__btn objectToolbar__btn--load"
           onClick={onLoadLayout}
+          title="Load previously saved layout"
         >
-          Load Layout
+          📂 Load Layout
+        </button>
+        <button 
+          type="button" 
+          className="objectToolbar__btn objectToolbar__btn--clear"
+          onClick={() => {
+            if (window.confirm("Clear all objects from canvas?")) {
+              window.location.reload();
+            }
+          }}
+          title="Clear canvas (removes all objects)"
+        >
+          🗑️ Clear All
         </button>
       </div>
     </div>

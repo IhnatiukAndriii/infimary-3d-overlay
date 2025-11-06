@@ -1,0 +1,2 @@
+Replace this with actual oxygen-cylinder.png
+See SETUP_IMAGES.md for instructions.

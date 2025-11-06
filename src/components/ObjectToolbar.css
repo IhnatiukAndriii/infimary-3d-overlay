@@ -156,6 +156,20 @@
   border-left: 4px solid transparent;
 }
 
+.objectToolbar__subheader {
+  width: 100%;
+  font-weight: 700;
+  font-size: 13px;
+  color: #666;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-top: 8px;
+  margin-bottom: 4px;
+  padding-left: 4px;
+  border-bottom: 2px solid rgba(0, 0, 0, 0.1);
+  padding-bottom: 4px;
+}
+
 .objectToolbar__group--objects {
   border-left-color: #ffc107;
 }
@@ -211,8 +225,18 @@
   background: linear-gradient(135deg, #ffc107 0%, #ff9800 100%);
 }
 
+.objectToolbar__btn--image {
+  background: linear-gradient(135deg, #00bcd4 0%, #0097a7 100%);
+  color: white;
+}
+
 .objectToolbar__btn--delete {
   background: linear-gradient(135deg, #f44336 0%, #d32f2f 100%);
+  color: white;
+}
+
+.objectToolbar__btn--clear {
+  background: linear-gradient(135deg, #ff5722 0%, #e64a19 100%);
   color: white;
 }
 

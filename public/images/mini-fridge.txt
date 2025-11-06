@@ -1,0 +1,2 @@
+Replace this with actual mini-fridge.png
+See SETUP_IMAGES.md for instructions.

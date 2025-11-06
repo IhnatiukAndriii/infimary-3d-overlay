@@ -910,15 +910,35 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
     try {
       const nameDefault = `Layout ${new Date().toLocaleString()}`;
       const name = window.prompt("Name this layout:", nameDefault) || nameDefault;
-      const json = fabricRef.current.toJSON();
+      
+      // Save with all custom properties
+      const json = fabricRef.current.toJSON([
+        'selectable',
+        'evented',
+        'shadow',
+        'opacity',
+        'cornerStyle',
+        'objectCaching',
+        'statefullCache',
+        'noScaleCache',
+        'cacheProperties',
+        'src',
+        'crossOrigin'
+      ]);
+      
+      console.log('💾 Saving layout:', name, json);
+      
       const raw = localStorage.getItem("IFM_LAYOUTS");
       const list = raw ? JSON.parse(raw) : [];
       list.unshift({ id: Date.now(), name, json, savedAt: Date.now() });
-      localStorage.setItem("IFM_LAYOUTS", JSON.stringify(list.slice(0, 20)));
-      alert("Layout saved locally.");
+      const saved = JSON.stringify(list.slice(0, 20));
+      localStorage.setItem("IFM_LAYOUTS", saved);
+      
+      console.log('✅ Layout saved successfully. Total layouts:', list.length);
+      alert(`✅ Layout "${name}" saved successfully!`);
     } catch (e) {
-      console.error("Save layout failed", e);
-      alert("Failed to save layout.");
+      console.error("❌ Save layout failed:", e);
+      alert("Failed to save layout: " + (e as Error).message);
     }
   }, []);
 
@@ -929,31 +949,53 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
     }
     try {
       const raw = localStorage.getItem("IFM_LAYOUTS");
+      console.log('📂 Loading layouts from storage:', raw ? 'Found' : 'Not found');
+      
       const list: Array<{ id:number; name:string; json:any; savedAt:number }> = raw ? JSON.parse(raw) : [];
+      
       if (!list.length) {
-        alert("No saved layouts found.");
+        alert("No saved layouts found. Please save a layout first.");
         return;
       }
+      
+      console.log(`📋 Found ${list.length} saved layouts`);
+      
       if (list.length === 1) {
+        console.log('🔄 Loading single layout:', list[0].name);
+        fabricRef.current.clear();
         fabricRef.current.loadFromJSON(list[0].json, () => {
-          fabricRef.current!.renderAll();
+          fabricRef.current!.requestRenderAll();
+          console.log('✅ Layout loaded successfully');
+          alert(`✅ Layout "${list[0].name}" loaded!`);
         });
         return;
       }
+      
       const options = list
         .slice(0, 10)
         .map((item, idx) => `${idx + 1}. ${item.name} (${new Date(item.savedAt).toLocaleString()})`)
         .join("\n");
       const answer = window.prompt(`Choose a layout to load (enter number):\n${options}`, "1");
-      if (!answer) return;
+      
+      if (!answer) {
+        console.log('⚠️ User cancelled layout selection');
+        return;
+      }
+      
       const index = Math.max(1, Math.min(10, parseInt(answer, 10))) - 1;
       const chosen = list[index] || list[0];
+      
+      console.log(`🔄 Loading layout #${index + 1}:`, chosen.name);
+      
+      fabricRef.current.clear();
       fabricRef.current.loadFromJSON(chosen.json, () => {
-        fabricRef.current!.renderAll();
+        fabricRef.current!.requestRenderAll();
+        console.log('✅ Layout loaded successfully');
+        alert(`✅ Layout "${chosen.name}" loaded!`);
       });
     } catch (e) {
-      console.error("Load layout failed", e);
-      alert("Failed to load layout.");
+      console.error("❌ Load layout failed:", e);
+      alert("Failed to load layout: " + (e as Error).message);
     }
   }, []);
 
@@ -1027,15 +1069,20 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
         
         {svgLibrary.length > 0 && (
           <div className={styles.svgLibrary}>
-            {svgLibrary.map((asset) => (
-              <button
-                key={asset.id}
-                type="button"
-                onClick={() => handleAddObject("svg", asset.dataUrl)}
-              >
-                {asset.name}
-              </button>
-            ))}
+            {svgLibrary.map((asset) => {
+              // Detect if it's SVG or raster image (PNG/JPG)
+              const isSvg = asset.dataUrl.includes('svg');
+              const type = isSvg ? "svg" : "image";
+              return (
+                <button
+                  key={asset.id}
+                  type="button"
+                  onClick={() => handleAddObject(type, asset.dataUrl)}
+                >
+                  {asset.name}
+                </button>
+              );
+            })}
           </div>
         )}
 

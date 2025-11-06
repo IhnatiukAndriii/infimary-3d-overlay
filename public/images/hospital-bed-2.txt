@@ -1,0 +1,2 @@
+Replace this with actual hospital-bed-2.png
+See SETUP_IMAGES.md for instructions.
