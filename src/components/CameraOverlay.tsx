@@ -531,6 +531,149 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
           const fileName = imageSrc.toLowerCase();
           const isCylinder = fileName.includes('oxygen-cylinder') || fileName.includes('cylinder');
           const isPurifier = fileName.includes('air-purifier') || fileName.includes('concentrator');
+          // Only target the specific mini-fridge asset to avoid affecting other objects
+          const isFridge = fileName.includes('mini-fridge');
+
+          // Mini Fridge conservative edge/background trimming
+          if (isFridge) {
+            const element = img.getElement();
+            const w = (element as HTMLImageElement).naturalWidth || img.width || 0;
+            const h = (element as HTMLImageElement).naturalHeight || img.height || 0;
+            if (w > 0 && h > 0) {
+              const offCanvas = document.createElement('canvas');
+              offCanvas.width = w;
+              offCanvas.height = h;
+              const offCtx = offCanvas.getContext('2d');
+              if (offCtx) {
+                offCtx.drawImage(element as HTMLImageElement, 0, 0, w, h);
+                const imageData = offCtx.getImageData(0, 0, w, h);
+                const data = imageData.data;
+                const borderSamples: Array<[number, number, number]> = [];
+                const sampleStep = 5;
+                for (let x = 0; x < w; x += sampleStep) {
+                  const top = (x + 0 * w) * 4;
+                  const bottom = (x + (h - 1) * w) * 4;
+                  borderSamples.push([data[top], data[top + 1], data[top + 2]]);
+                  borderSamples.push([data[bottom], data[bottom + 1], data[bottom + 2]]);
+                }
+                for (let y = 0; y < h; y += sampleStep) {
+                  const left = (0 + y * w) * 4;
+                  const right = ((w - 1) + y * w) * 4;
+                  borderSamples.push([data[left], data[left + 1], data[left + 2]]);
+                  borderSamples.push([data[right], data[right + 1], data[right + 2]]);
+                }
+                const bins = new Map<string, { r: number; g: number; b: number; count: number }>();
+                for (const [r, g, b] of borderSamples) {
+                  const key = `${Math.round(r / 8) * 8}|${Math.round(g / 8) * 8}|${Math.round(b / 8) * 8}`;
+                  const ex = bins.get(key);
+                  if (ex) ex.count++; else bins.set(key, { r, g, b, count: 1 });
+                }
+                const bgColors = Array.from(bins.values())
+                  .filter(c => (c.r + c.g + c.b) / 3 > 220)
+                  .sort((a, b) => b.count - a.count)
+                  .slice(0, 6);
+                const dist = (r: number, g: number, b: number, c: { r: number; g: number; b: number }) => {
+                  const dr = r - c.r, dg = g - c.g, db = b - c.b;
+                  return Math.sqrt(dr * dr + dg * dg + db * db);
+                };
+                // Further increased aggressiveness for mini-fridge only.
+                // Runtime override possible via:
+                //   window.IFM_FRIDGE_TRIM = { distance?: number, brightness?: number, hardMode?: boolean, expand?: number }
+                // distance: cluster distance threshold (default 44)
+                // brightness: gate for bright removal (default 210)
+                // hardMode: adds neighbor expansion + mid-bright removal
+                // expand: extra neighbor radius (1 or 2) used when hardMode
+                const cfg: any = (window as any).IFM_FRIDGE_TRIM || {};
+                const fridgeBaseThreshold = Math.max(10, Math.min(80, Number(cfg.distance ?? 52))); // even higher trim default
+                const brightnessGate = Math.max(140, Math.min(255, Number(cfg.brightness ?? 200))); // broader bright window
+                const hardMode = Boolean(cfg.hardMode); // off by default
+                const expandRadius = Math.max(1, Math.min(3, Number(cfg.expand ?? (hardMode ? 2 : 1))));
+
+                // First pass: direct color distance & ultra-bright handling
+                const toRemove = new Uint8Array(w * h); // mark pixels to remove for second pass logic
+                for (let i = 0; i < data.length; i += 4) {
+                  const r = data[i], g = data[i + 1], b = data[i + 2];
+                  const brightness = (r + g + b) / 3;
+                  const ultraBright = brightness >= 235; // more pixels count as ultra-bright
+                  if (brightness < brightnessGate && !ultraBright) continue;
+                  for (const c of bgColors) {
+                    const d = dist(r, g, b, c);
+                    if (d <= fridgeBaseThreshold || (ultraBright && d <= fridgeBaseThreshold + 12)) {
+                      toRemove[i / 4] = 1;
+                      data[i + 3] = 0;
+                      break;
+                    }
+                  }
+                }
+
+                // Second pass (hardMode only): expand transparent region into near-bright border pixels.
+                if (hardMode) {
+                  const idxOf = (x: number, y: number) => (x + y * w) * 4;
+                  for (let y = 1; y < h - 1; y++) {
+                    for (let x = 1; x < w - 1; x++) {
+                      const base = idxOf(x, y);
+                      if (data[base + 3] === 0) continue; // already transparent
+                      const r = data[base], g = data[base + 1], b = data[base + 2];
+                      const brightness = (r + g + b) / 3;
+                      if (brightness < (brightnessGate - 25)) continue; // only act on fairly bright
+                      // Check neighbors within expandRadius for already removed pixels
+                      let nearRemoved = 0;
+                      for (let dy = -expandRadius; dy <= expandRadius && nearRemoved < 2; dy++) {
+                        const ny = y + dy;
+                        if (ny < 0 || ny >= h) continue;
+                        for (let dx = -expandRadius; dx <= expandRadius && nearRemoved < 2; dx++) {
+                          const nx = x + dx;
+                          if (nx < 0 || nx >= w) continue;
+                          const ni = (nx + ny * w);
+                          if (toRemove[ni]) nearRemoved++;
+                        }
+                      }
+                      if (nearRemoved >= 1) { // relax expansion trigger
+                        // Re-check distance against dominant bg colors with relaxed threshold
+                        for (const c of bgColors) {
+                          const d = dist(r, g, b, c);
+                          if (d <= fridgeBaseThreshold + 16) { // stronger expansion
+                            data[base + 3] = 0;
+                            toRemove[base / 4] = 1;
+                            break;
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+                const neighborOffsets = [ -4 * w, 4 * w, -4, 4 ];
+                for (let y = 1; y < h - 1; y++) {
+                  for (let x = 1; x < w - 1; x++) {
+                    const idx = (x + y * w) * 4;
+                    if (data[idx + 3] === 0) {
+                      let darkerOpaque = 0;
+                      for (const off of neighborOffsets) {
+                        const n = idx + off;
+                        if (n < 0 || n >= data.length) continue;
+                        if (data[n + 3] > 0) {
+                          const br = (data[n] + data[n + 1] + data[n + 2]) / 3;
+                          if (br < 230) darkerOpaque++;
+                        }
+                      }
+                      if (darkerOpaque >= 3) {
+                        data[idx + 3] = 255;
+                      }
+                    }
+                  }
+                }
+                offCtx.putImageData(imageData, 0, 0);
+                const processedUrl = offCanvas.toDataURL('image/png');
+                fabric.Image.fromURL(processedUrl, (processedImg) => {
+                  if (!processedImg) return;
+                  img = processedImg;
+                  console.log('🧊 Mini Fridge background trimming applied:', { fileName, w, h, bgColors, fridgeBaseThreshold, brightnessGate });
+                  continueWithImage(img);
+                }, { crossOrigin: 'anonymous' });
+                return; // stop normal flow
+              }
+            }
+          }
           if (isCylinder) {
             const element = img.getElement();
             const w = (element as HTMLImageElement).naturalWidth || img.width || 0;
@@ -705,12 +848,9 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
           if (imageSrc && imageSrc.startsWith('blob:')) {
             URL.revokeObjectURL(imageSrc);
           }
-        }
-      }, { 
-        crossOrigin: "anonymous",
-        // Force image loading even if there are CORS issues
-      });
-    } else if (type === "svg" && imageSrc) {
+    }
+    }); // end fabric.Image.fromURL callback
+  } else if (type === "svg" && imageSrc) {
       const source = imageSrc;
       const urlToFetch = /^data:|^blob:/i.test(source) ? source : encodeURI(source);
       fetch(urlToFetch)
