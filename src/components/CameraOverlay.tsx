@@ -523,105 +523,188 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
           width: img.width, 
           height: img.height 
         });
-        
-        // Remove white/light background from PNG images
+        /**
+         * Edge-based conservative background removal for oxygen-cylinder / air-purifier.
+         * Goal: remove only true border background (near-white) while keeping full object including bottom.
+         */
         try {
-          const Filters: any = (fabric.Image as any).filters;
-          const hasRemove = Filters && typeof Filters.RemoveColor === 'function';
-          
-          if (hasRemove) {
-            // Determine aggressiveness based on filename
-            const fileName = imageSrc.toLowerCase();
-            let whiteDistance = 0.1;
-            let grayDistance = 0.05;
-            let beigeDistance = 0.04;
-            
-            // Air purifier (concentrator) - needs minimal aggressiveness
-            if (fileName.includes('air-purifier') || fileName.includes('concentrator')) {
-              whiteDistance = 0.08;  // Slightly increased to remove remaining background
-              grayDistance = 0.04;
-              beigeDistance = 0.03;
-              console.log('🎨 Applying minimal background removal (air-purifier)...');
+          const fileName = imageSrc.toLowerCase();
+          const isCylinder = fileName.includes('oxygen-cylinder') || fileName.includes('cylinder');
+          const isPurifier = fileName.includes('air-purifier') || fileName.includes('concentrator');
+          if (isCylinder) {
+            const element = img.getElement();
+            const w = (element as HTMLImageElement).naturalWidth || img.width || 0;
+            const h = (element as HTMLImageElement).naturalHeight || img.height || 0;
+            if (w > 0 && h > 0) {
+              const offCanvas = document.createElement('canvas');
+              offCanvas.width = w;
+              offCanvas.height = h;
+              const offCtx = offCanvas.getContext('2d');
+              if (offCtx) {
+                offCtx.drawImage(element as HTMLImageElement, 0, 0, w, h);
+                const imageData = offCtx.getImageData(0, 0, w, h);
+                const data = imageData.data;
+
+                // Collect border pixels (sample every 6px) to infer background clusters
+                const bgSamples: Array<[number, number, number]> = [];
+                const sampleStep = 6;
+                for (let x = 0; x < w; x += sampleStep) {
+                  const topIdx = (x + 0 * w) * 4;
+                  const botIdx = (x + (h - 1) * w) * 4;
+                  bgSamples.push([data[topIdx], data[topIdx + 1], data[topIdx + 2]]);
+                  bgSamples.push([data[botIdx], data[botIdx + 1], data[botIdx + 2]]);
+                }
+                for (let y = 0; y < h; y += sampleStep) {
+                  const leftIdx = (0 + y * w) * 4;
+                  const rightIdx = ((w - 1) + y * w) * 4;
+                  bgSamples.push([data[leftIdx], data[leftIdx + 1], data[leftIdx + 2]]);
+                  bgSamples.push([data[rightIdx], data[rightIdx + 1], data[rightIdx + 2]]);
+                }
+
+                // Derive representative colors (simple binning by rounding to nearest 8)
+                const bins = new Map<string, { r: number; g: number; b: number; count: number }>();
+                for (const [r, g, b] of bgSamples) {
+                  const key = `${Math.round(r / 8) * 8}|${Math.round(g / 8) * 8}|${Math.round(b / 8) * 8}`;
+                  const ex = bins.get(key);
+                  if (ex) ex.count++; else bins.set(key, { r, g, b, count: 1 });
+                }
+                const bgColors = Array.from(bins.values())
+                  .sort((a, b) => b.count - a.count)
+                  .slice(0, 5); // top 5 frequent border colors
+
+                // Distance function (Euclidean in RGB)
+                const dist = (r: number, g: number, b: number, c: { r: number; g: number; b: number }) => {
+                  const dr = r - c.r, dg = g - c.g, db = b - c.b;
+                  return Math.sqrt(dr * dr + dg * dg + db * db);
+                };
+
+                // Conservative threshold: only remove very near colors. Oxygen cylinder often sits on bright white.
+                // If the dominant background is extremely bright, narrow threshold further.
+                const avgBrightness = bgColors.reduce((sum, c) => sum + (c.r + c.g + c.b) / 3, 0) / Math.max(1, bgColors.length);
+                const baseThreshold = avgBrightness > 240 ? 18 : 26; // tighter when very bright
+                const threshold = baseThreshold - 4; // more conservative for cylinder
+
+                // Pass 1: mark background pixels
+                for (let i = 0; i < data.length; i += 4) {
+                  const r = data[i], g = data[i + 1], b = data[i + 2];
+                  // Quick reject: if not bright enough, keep
+                  if (r < 225 && g < 225 && b < 225) continue;
+                  for (const c of bgColors) {
+                    if (dist(r, g, b, c) <= threshold) {
+                      data[i + 3] = 0; // transparent
+                      break;
+                    }
+                  }
+                }
+
+                // Optional clean-up: restore semi-transparent isolated dark pixels (avoid accidental holes)
+                // Simple heuristic: if a pixel is transparent but neighbors (up to 4) are opaque and darker, restore it.
+                const neighborOffsets = [
+                  -4 * w, // up
+                  4 * w,  // down
+                  -4,     // left
+                  4       // right
+                ];
+                for (let y = 1; y < h - 1; y++) {
+                  for (let x = 1; x < w - 1; x++) {
+                    const idx = (x + y * w) * 4;
+                    if (data[idx + 3] === 0) {
+                      let opaqueDarkNeighbors = 0;
+                      for (const off of neighborOffsets) {
+                        const ni = idx + off;
+                        if (ni < 0 || ni >= data.length) continue;
+                        if (data[ni + 3] > 0) {
+                          const nr = data[ni], ng = data[ni + 1], nb = data[ni + 2];
+                          const brightness = (nr + ng + nb) / 3;
+                          if (brightness < 230) opaqueDarkNeighbors++;
+                        }
+                      }
+                      if (opaqueDarkNeighbors >= 3) {
+                        // restore
+                        data[idx + 3] = 255;
+                      }
+                    }
+                  }
+                }
+
+                offCtx.putImageData(imageData, 0, 0);
+                const processedUrl = offCanvas.toDataURL('image/png');
+                // Replace original image with processed version before adding to canvas.
+                fabric.Image.fromURL(processedUrl, (processedImg) => {
+                  if (!processedImg) return;
+                  img = processedImg; // reassign reference to continue normal flow
+                  console.log('🧪 Edge-based background removal applied:', {
+                    fileName,
+                    originalWidth: w,
+                    originalHeight: h,
+                    bgColors,
+                    threshold,
+                  });
+                  continueWithImage(img);
+                }, { crossOrigin: 'anonymous' });
+                return; // Prevent continuing with unprocessed image
+              }
             }
-            // Oxygen cylinder - needs more aggressiveness (keep distinct behavior)
-            else if (fileName.includes('oxygen-cylinder') || fileName.includes('cylinder')) {
-              whiteDistance = 0.12;   // Slightly stronger removal for bright background
-              grayDistance = 0.08;
-              beigeDistance = 0.05;
-              console.log('🎨 Applying stronger background removal (oxygen-cylinder)...');
+          }
+
+          // For air-purifier: restore minimal color-based background removal (white/light-gray/beige)
+          if (isPurifier) {
+            const Filters: any = (fabric.Image as any).filters;
+            const hasRemove = Filters && typeof Filters.RemoveColor === 'function';
+            if (hasRemove) {
+              const removeWhite = new Filters.RemoveColor({ color: '#ffffff', distance: 0.08 });
+              const removeLightGray = new Filters.RemoveColor({ color: '#f5f5f5', distance: 0.04 });
+              const removeBeige = new Filters.RemoveColor({ color: '#fafafa', distance: 0.03 });
+              img.filters = [removeWhite, removeLightGray, removeBeige];
+              (img as any).applyFilters?.();
+              console.log('🎨 Restored minimal background removal (air-purifier).');
+            } else {
+              console.log('⚠️ RemoveColor filter not available for air-purifier');
             }
-            // Default for other images
-            else {
-              console.log('🎨 Applying standard background removal...');
-            }
-            
-            // Remove white and near-white colors
-            const removeWhite = new Filters.RemoveColor({ 
-              color: '#ffffff', 
-              distance: whiteDistance
-            });
-            
-            // Remove very light gray
-            const removeLightGray = new Filters.RemoveColor({ 
-              color: '#f5f5f5', 
-              distance: grayDistance
-            });
-            
-            // Remove light beige/cream
-            const removeBeige = new Filters.RemoveColor({ 
-              color: '#fafafa', 
-              distance: beigeDistance
-            });
-            
-            img.filters = [removeWhite, removeLightGray, removeBeige];
-            (img as any).applyFilters?.();
-            
-            console.log('✅ Background removal filters applied (minimal)');
-          } else {
-            console.log('⚠️ RemoveColor filter not available');
           }
         } catch (e) {
-          console.log('⚠️ Filter error (non-critical):', e);
+          console.warn('⚠️ Edge background removal failed, proceeding without it:', e);
         }
 
-        // Calculate optimal scale based on image size
-        const maxDimension = Math.max(img.width || 0, img.height || 0);
-        const targetSize = isMobile ? 200 : 300;
-        const autoScale = maxDimension > 0 ? targetSize / maxDimension : scaleFactor;
-        const finalScale = Math.min(autoScale, scaleFactor);
+        // Fallback path if not processed above
+        continueWithImage(img);
 
-        img.set({
-          left: 140,
-          top: 140,
-          scaleX: finalScale,
-          scaleY: finalScale,
-          shadow: shadowConfig,
-          opacity: 0.95,
-          cornerStyle: 'circle' as const,
-          objectCaching: true,
-          statefullCache: true,
-          noScaleCache: false,
-          cacheProperties: ['fill', 'stroke', 'strokeWidth', 'strokeDashArray', 'width', 'height'],
-          // Enable all transformations
-          lockRotation: false,
-          lockScalingX: false,
-          lockScalingY: false,
-          lockMovementX: false,
-          lockMovementY: false,
-          hasControls: true,
-          hasBorders: true,
-          selectable: true,
-          evented: true,
-        });
-        
-        fabricRef.current!.add(img);
-        fabricRef.current!.setActiveObject(img);
-        fabricRef.current!.requestRenderAll();
-        
-        console.log('✅ PNG image added to canvas with full interaction');
-        
-        if (imageSrc.startsWith("blob:")) {
-          URL.revokeObjectURL(imageSrc);
+        function continueWithImage(finalImg: fabric.Image) {
+          // Calculate optimal scale based on image size
+          const maxDimension = Math.max(finalImg.width || 0, finalImg.height || 0);
+          const targetSize = isMobile ? 200 : 300;
+          const autoScale = maxDimension > 0 ? targetSize / maxDimension : scaleFactor;
+          const finalScale = Math.min(autoScale, scaleFactor);
+
+          finalImg.set({
+            left: 140,
+            top: 140,
+            scaleX: finalScale,
+            scaleY: finalScale,
+            shadow: shadowConfig,
+            opacity: 0.95,
+            cornerStyle: 'circle' as const,
+            objectCaching: true,
+            statefullCache: true,
+            noScaleCache: false,
+            cacheProperties: ['fill', 'stroke', 'strokeWidth', 'strokeDashArray', 'width', 'height'],
+            lockRotation: false,
+            lockScalingX: false,
+            lockScalingY: false,
+            lockMovementX: false,
+            lockMovementY: false,
+            hasControls: true,
+            hasBorders: true,
+            selectable: true,
+            evented: true,
+          });
+          fabricRef.current!.add(finalImg);
+          fabricRef.current!.setActiveObject(finalImg);
+          fabricRef.current!.requestRenderAll();
+          console.log('✅ PNG image added to canvas with full interaction');
+          if (imageSrc && imageSrc.startsWith('blob:')) {
+            URL.revokeObjectURL(imageSrc);
+          }
         }
       }, { 
         crossOrigin: "anonymous",
