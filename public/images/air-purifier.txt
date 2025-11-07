@@ -1,2 +1,0 @@
-Replace this with actual air-purifier.png
-See SETUP_IMAGES.md for instructions.

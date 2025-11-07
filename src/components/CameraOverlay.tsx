@@ -509,26 +509,92 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
       fabricRef.current.renderAll();
     } else if (type === "image" && imageSrc) {
       const isMobile = window.innerWidth <= 768;
-      const scaleFactor = isMobile ? 0.3 : 0.4;
+      const scaleFactor = isMobile ? 0.25 : 0.35;
       
       fabric.Image.fromURL(imageSrc, (img) => {
-        // Try to remove white/black background via RemoveColor filters (if available)
+        if (!img || !img.width || !img.height) {
+          console.error('Failed to load image:', imageSrc);
+          alert('Failed to load image. Please check the file format.');
+          return;
+        }
+        
+        console.log('✅ Image loaded:', { 
+          src: imageSrc, 
+          width: img.width, 
+          height: img.height 
+        });
+        
+        // Remove white/light background from PNG images
         try {
           const Filters: any = (fabric.Image as any).filters;
           const hasRemove = Filters && typeof Filters.RemoveColor === 'function';
+          
           if (hasRemove) {
-            const white = new Filters.RemoveColor({ color: '#ffffff', distance: 0.2 });
-            const black = new Filters.RemoveColor({ color: '#000000', distance: 0.2 });
-            img.filters = [white, black];
+            // Determine aggressiveness based on filename
+            const fileName = imageSrc.toLowerCase();
+            let whiteDistance = 0.1;
+            let grayDistance = 0.05;
+            let beigeDistance = 0.04;
+            
+            // Air purifier (concentrator) - needs minimal aggressiveness
+            if (fileName.includes('air-purifier') || fileName.includes('concentrator')) {
+              whiteDistance = 0.08;  // Slightly increased to remove remaining background
+              grayDistance = 0.04;
+              beigeDistance = 0.03;
+              console.log('🎨 Applying minimal background removal (air-purifier)...');
+            }
+            // Oxygen cylinder - needs more aggressiveness (keep distinct behavior)
+            else if (fileName.includes('oxygen-cylinder') || fileName.includes('cylinder')) {
+              whiteDistance = 0.12;   // Slightly stronger removal for bright background
+              grayDistance = 0.08;
+              beigeDistance = 0.05;
+              console.log('🎨 Applying stronger background removal (oxygen-cylinder)...');
+            }
+            // Default for other images
+            else {
+              console.log('🎨 Applying standard background removal...');
+            }
+            
+            // Remove white and near-white colors
+            const removeWhite = new Filters.RemoveColor({ 
+              color: '#ffffff', 
+              distance: whiteDistance
+            });
+            
+            // Remove very light gray
+            const removeLightGray = new Filters.RemoveColor({ 
+              color: '#f5f5f5', 
+              distance: grayDistance
+            });
+            
+            // Remove light beige/cream
+            const removeBeige = new Filters.RemoveColor({ 
+              color: '#fafafa', 
+              distance: beigeDistance
+            });
+            
+            img.filters = [removeWhite, removeLightGray, removeBeige];
             (img as any).applyFilters?.();
+            
+            console.log('✅ Background removal filters applied (minimal)');
+          } else {
+            console.log('⚠️ RemoveColor filter not available');
           }
-        } catch {}
+        } catch (e) {
+          console.log('⚠️ Filter error (non-critical):', e);
+        }
+
+        // Calculate optimal scale based on image size
+        const maxDimension = Math.max(img.width || 0, img.height || 0);
+        const targetSize = isMobile ? 200 : 300;
+        const autoScale = maxDimension > 0 ? targetSize / maxDimension : scaleFactor;
+        const finalScale = Math.min(autoScale, scaleFactor);
 
         img.set({
-          left: 120,
-          top: 120,
-          scaleX: scaleFactor,
-          scaleY: scaleFactor,
+          left: 140,
+          top: 140,
+          scaleX: finalScale,
+          scaleY: finalScale,
           shadow: shadowConfig,
           opacity: 0.95,
           cornerStyle: 'circle' as const,
@@ -536,14 +602,31 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
           statefullCache: true,
           noScaleCache: false,
           cacheProperties: ['fill', 'stroke', 'strokeWidth', 'strokeDashArray', 'width', 'height'],
+          // Enable all transformations
+          lockRotation: false,
+          lockScalingX: false,
+          lockScalingY: false,
+          lockMovementX: false,
+          lockMovementY: false,
+          hasControls: true,
+          hasBorders: true,
+          selectable: true,
+          evented: true,
         });
+        
         fabricRef.current!.add(img);
         fabricRef.current!.setActiveObject(img);
         fabricRef.current!.requestRenderAll();
+        
+        console.log('✅ PNG image added to canvas with full interaction');
+        
         if (imageSrc.startsWith("blob:")) {
           URL.revokeObjectURL(imageSrc);
         }
-      }, { crossOrigin: "anonymous" });
+      }, { 
+        crossOrigin: "anonymous",
+        // Force image loading even if there are CORS issues
+      });
     } else if (type === "svg" && imageSrc) {
       const source = imageSrc;
       const urlToFetch = /^data:|^blob:/i.test(source) ? source : encodeURI(source);

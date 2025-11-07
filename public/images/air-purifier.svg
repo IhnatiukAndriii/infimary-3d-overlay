@@ -1,8 +1,0 @@
-<svg width="400" height="600" xmlns="http://www.w3.org/2000/svg">
-      <rect width="400" height="600" fill="#E8E8E8"/>
-      <rect x="40" y="40" width="320" height="150" rx="10" fill="#2C3E50"/>
-      <rect x="60" y="60" width="280" height="110" fill="#3498DB"/>
-      <circle cx="200" cy="500" r="40" fill="#34495E"/>
-      <text x="200" y="115" font-size="18" fill="white" text-anchor="middle" font-family="Arial">Air Purifier</text>
-      <text x="200" y="335" font-size="14" fill="#333" text-anchor="middle" font-family="Arial">MAOXYA5</text>
-    </svg>
