@@ -30,7 +30,7 @@ const ObjectToolbar: React.FC<ObjectToolbarProps> = ({ onAdd, onCapture, onSaveL
 
   const DEFAULT_IMAGES: Array<{ name: string; path: string; type: 'svg' | 'image' }> = [
     { name: "🧊 Mini Fridge", path: "/images/mini-fridge.png", type: 'image' },
-    { name: "💨 Air Purifier", path: "/images/air-purifier.png", type: 'image' },
+    { name: "💨 Oxygen Concentrator", path: "/images/air-purifier.png", type: 'image' },
     { name: "🛏️ Hospital Bed 1", path: "/images/hospital-bed-1.png", type: 'image' },
     { name: "🛏️ Hospital Bed 2", path: "/images/hospital-bed-2.png", type: 'image' },
     { name: "⚕️ Oxygen Cylinder", path: "/images/oxygen-cylinder.png", type: 'image' },

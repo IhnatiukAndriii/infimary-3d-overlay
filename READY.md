@@ -4,7 +4,7 @@
 
 ### 5 нових повноцінних об'єктів:
 1. 🧊 **Mini Fridge** - Міні-холодильник
-2. 💨 **Air Purifier** - Очищувач повітря MAOXYA5
+2. 💨 **Oxygen Concentrator** - Кисневий концентратор MAOXYA5
 3. 🛏️ **Hospital Bed 1** - Лікарняне ліжко (тип 1)
 4. 🛏️ **Hospital Bed 2** - Лікарняне ліжко (тип 2)
 5. ⚕️ **Oxygen Cylinder** - Кисневий балон
@@ -35,7 +35,7 @@
 
 2. **Medical Equipment (PNG)** 🔵 (блакитні кнопки)
    - 🧊 Mini Fridge
-   - 💨 Air Purifier
+   - 💨 Oxygen Concentrator
    - 🛏️ Hospital Bed 1
    - 🛏️ Hospital Bed 2
    - ⚕️ Oxygen Cylinder
@@ -117,7 +117,7 @@ Copy-Item "шлях\до\air-purifier.png" -Destination "public\images\"
 1. Зробіть фото порожньої кімнати
 2. Додайте Hospital Bed 1 у центр
 3. Додайте Oxygen Cylinder праворуч
-4. Додайте Air Purifier у кут
+4. Додайте Oxygen Concentrator у кут
 5. Додайте Mini Fridge біля стіни
 6. Capture → Save → Share!
 ```
