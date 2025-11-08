@@ -533,6 +533,8 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
           const isPurifier = fileName.includes('air-purifier') || fileName.includes('concentrator');
           // Only target the specific mini-fridge asset to avoid affecting other objects
           const isFridge = fileName.includes('mini-fridge');
+          const isBed1 = fileName.includes('hospital-bed-1');
+          const isBed2 = fileName.includes('hospital-bed-2');
 
           // Mini Fridge conservative edge/background trimming
           if (isFridge) {
@@ -804,6 +806,30 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
             } else {
               console.log('⚠️ RemoveColor filter not available for air-purifier');
             }
+          }
+
+          // For hospital beds: apply safe near-white trimming only for bed-1 and bed-2 PNGs
+          if (isBed1 || isBed2) {
+            try {
+              const Filters: any = (fabric.Image as any).filters;
+              if (Filters && typeof Filters.RemoveColor === 'function') {
+                // Allow runtime override: window.IFM_BED_TRIM = { enabled?: boolean, distances?: number[] }
+                const cfg: any = (window as any).IFM_BED_TRIM || {};
+                if (cfg.enabled === false) {
+                  console.log('🛏️ Bed trim disabled via IFM_BED_TRIM');
+                } else {
+                  const dists: number[] = Array.isArray(cfg.distances) && cfg.distances.length
+                    ? cfg.distances
+                    : [0.08, 0.05, 0.04]; // conservative
+                  const removeWhite = new Filters.RemoveColor({ color: '#ffffff', distance: dists[0] });
+                  const removeNearWhite1 = new Filters.RemoveColor({ color: '#f7f7f7', distance: dists[1] });
+                  const removeNearWhite2 = new Filters.RemoveColor({ color: '#f0f0f0', distance: dists[2] });
+                  img.filters = [removeWhite, removeNearWhite1, removeNearWhite2];
+                  (img as any).applyFilters?.();
+                  console.log('🛏️ Applied conservative near-white trim (hospital bed).', { dists });
+                }
+              }
+            } catch {}
           }
         } catch (e) {
           console.warn('⚠️ Edge background removal failed, proceeding without it:', e);
