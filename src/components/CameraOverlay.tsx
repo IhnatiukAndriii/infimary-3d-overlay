@@ -535,6 +535,9 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
           const isFridge = fileName.includes('mini-fridge');
           const isBed1 = fileName.includes('hospital-bed-1');
           const isBed2 = fileName.includes('hospital-bed-2');
+          const isWheelchair = fileName.includes('wheelchair');
+          const isCurtainLeft = fileName.includes('curtain_left') || fileName.includes('curtain left');
+          const isCurtainRight = fileName.includes('curtain right') || fileName.includes('curtain_right');
 
           // Mini Fridge conservative edge/background trimming
           if (isFridge) {
@@ -830,6 +833,210 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
                 }
               }
             } catch {}
+          }
+
+          // For wheelchair: apply white background removal
+          if (isWheelchair) {
+            const element = img.getElement();
+            const w = (element as HTMLImageElement).naturalWidth || img.width || 0;
+            const h = (element as HTMLImageElement).naturalHeight || img.height || 0;
+            if (w > 0 && h > 0) {
+              const offCanvas = document.createElement('canvas');
+              offCanvas.width = w;
+              offCanvas.height = h;
+              const offCtx = offCanvas.getContext('2d');
+              if (offCtx) {
+                offCtx.drawImage(element as HTMLImageElement, 0, 0, w, h);
+                const imageData = offCtx.getImageData(0, 0, w, h);
+                const data = imageData.data;
+                
+                // Sample border colors to detect background
+                const borderSamples: Array<[number, number, number]> = [];
+                const sampleStep = 5;
+                for (let x = 0; x < w; x += sampleStep) {
+                  const top = (x + 0 * w) * 4;
+                  const bottom = (x + (h - 1) * w) * 4;
+                  borderSamples.push([data[top], data[top + 1], data[top + 2]]);
+                  borderSamples.push([data[bottom], data[bottom + 1], data[bottom + 2]]);
+                }
+                for (let y = 0; y < h; y += sampleStep) {
+                  const left = (0 + y * w) * 4;
+                  const right = ((w - 1) + y * w) * 4;
+                  borderSamples.push([data[left], data[left + 1], data[left + 2]]);
+                  borderSamples.push([data[right], data[right + 1], data[right + 2]]);
+                }
+                
+                // Find dominant bright background colors
+                const bins = new Map<string, { r: number; g: number; b: number; count: number }>();
+                for (const [r, g, b] of borderSamples) {
+                  const key = `${Math.round(r / 8) * 8}|${Math.round(g / 8) * 8}|${Math.round(b / 8) * 8}`;
+                  const ex = bins.get(key);
+                  if (ex) ex.count++; else bins.set(key, { r, g, b, count: 1 });
+                }
+                const bgColors = Array.from(bins.values())
+                  .filter(c => (c.r + c.g + c.b) / 3 > 200)
+                  .sort((a, b) => b.count - a.count)
+                  .slice(0, 6);
+                
+                const dist = (r: number, g: number, b: number, c: { r: number; g: number; b: number }) => {
+                  const dr = r - c.r, dg = g - c.g, db = b - c.b;
+                  return Math.sqrt(dr * dr + dg * dg + db * db);
+                };
+                
+                // Aggressive removal for noisy white/gray background
+                const threshold = 55; // increased for noisy backgrounds
+                const brightnessGate = 190; // remove bright pixels
+                
+                for (let i = 0; i < data.length; i += 4) {
+                  const r = data[i], g = data[i + 1], b = data[i + 2];
+                  const brightness = (r + g + b) / 3;
+                  const ultraBright = brightness >= 235;
+                  
+                  if (brightness < brightnessGate && !ultraBright) continue;
+                  
+                  for (const c of bgColors) {
+                    const d = dist(r, g, b, c);
+                    if (d <= threshold || (ultraBright && d <= threshold + 15)) {
+                      data[i + 3] = 0;
+                      break;
+                    }
+                  }
+                }
+                
+                // Restore isolated opaque pixels surrounded by transparency
+                const neighborOffsets = [ -4 * w, 4 * w, -4, 4 ];
+                for (let y = 1; y < h - 1; y++) {
+                  for (let x = 1; x < w - 1; x++) {
+                    const idx = (x + y * w) * 4;
+                    if (data[idx + 3] === 0) {
+                      let darkerOpaque = 0;
+                      for (const off of neighborOffsets) {
+                        const n = idx + off;
+                        if (n < 0 || n >= data.length) continue;
+                        if (data[n + 3] > 0) {
+                          const br = (data[n] + data[n + 1] + data[n + 2]) / 3;
+                          if (br < 220) darkerOpaque++;
+                        }
+                      }
+                      if (darkerOpaque >= 3) {
+                        data[idx + 3] = 255;
+                      }
+                    }
+                  }
+                }
+                
+                offCtx.putImageData(imageData, 0, 0);
+                const processedUrl = offCanvas.toDataURL('image/png');
+                fabric.Image.fromURL(processedUrl, (processedImg) => {
+                  if (!processedImg) return;
+                  img = processedImg;
+                  console.log('♿ Wheelchair noisy background removed:', { w, h, bgColors, threshold });
+                  continueWithImage(img);
+                }, { crossOrigin: 'anonymous' });
+                return;
+              }
+            }
+          }
+
+          // For curtains: apply white background removal
+          if (isCurtainLeft || isCurtainRight) {
+            const element = img.getElement();
+            const w = (element as HTMLImageElement).naturalWidth || img.width || 0;
+            const h = (element as HTMLImageElement).naturalHeight || img.height || 0;
+            if (w > 0 && h > 0) {
+              const offCanvas = document.createElement('canvas');
+              offCanvas.width = w;
+              offCanvas.height = h;
+              const offCtx = offCanvas.getContext('2d');
+              if (offCtx) {
+                offCtx.drawImage(element as HTMLImageElement, 0, 0, w, h);
+                const imageData = offCtx.getImageData(0, 0, w, h);
+                const data = imageData.data;
+                
+                // Sample border colors
+                const borderSamples: Array<[number, number, number]> = [];
+                const sampleStep = 5;
+                for (let x = 0; x < w; x += sampleStep) {
+                  const top = (x + 0 * w) * 4;
+                  const bottom = (x + (h - 1) * w) * 4;
+                  borderSamples.push([data[top], data[top + 1], data[top + 2]]);
+                  borderSamples.push([data[bottom], data[bottom + 1], data[bottom + 2]]);
+                }
+                for (let y = 0; y < h; y += sampleStep) {
+                  const left = (0 + y * w) * 4;
+                  const right = ((w - 1) + y * w) * 4;
+                  borderSamples.push([data[left], data[left + 1], data[left + 2]]);
+                  borderSamples.push([data[right], data[right + 1], data[right + 2]]);
+                }
+                
+                const bins = new Map<string, { r: number; g: number; b: number; count: number }>();
+                for (const [r, g, b] of borderSamples) {
+                  const key = `${Math.round(r / 8) * 8}|${Math.round(g / 8) * 8}|${Math.round(b / 8) * 8}`;
+                  const ex = bins.get(key);
+                  if (ex) ex.count++; else bins.set(key, { r, g, b, count: 1 });
+                }
+                const bgColors = Array.from(bins.values())
+                  .filter(c => (c.r + c.g + c.b) / 3 > 200)
+                  .sort((a, b) => b.count - a.count)
+                  .slice(0, 6);
+                
+                const dist = (r: number, g: number, b: number, c: { r: number; g: number; b: number }) => {
+                  const dr = r - c.r, dg = g - c.g, db = b - c.b;
+                  return Math.sqrt(dr * dr + dg * dg + db * db);
+                };
+                
+                const threshold = 55;
+                const brightnessGate = 190;
+                
+                for (let i = 0; i < data.length; i += 4) {
+                  const r = data[i], g = data[i + 1], b = data[i + 2];
+                  const brightness = (r + g + b) / 3;
+                  const ultraBright = brightness >= 235;
+                  
+                  if (brightness < brightnessGate && !ultraBright) continue;
+                  
+                  for (const c of bgColors) {
+                    const d = dist(r, g, b, c);
+                    if (d <= threshold || (ultraBright && d <= threshold + 15)) {
+                      data[i + 3] = 0;
+                      break;
+                    }
+                  }
+                }
+                
+                const neighborOffsets = [ -4 * w, 4 * w, -4, 4 ];
+                for (let y = 1; y < h - 1; y++) {
+                  for (let x = 1; x < w - 1; x++) {
+                    const idx = (x + y * w) * 4;
+                    if (data[idx + 3] === 0) {
+                      let darkerOpaque = 0;
+                      for (const off of neighborOffsets) {
+                        const n = idx + off;
+                        if (n < 0 || n >= data.length) continue;
+                        if (data[n + 3] > 0) {
+                          const br = (data[n] + data[n + 1] + data[n + 2]) / 3;
+                          if (br < 220) darkerOpaque++;
+                        }
+                      }
+                      if (darkerOpaque >= 3) {
+                        data[idx + 3] = 255;
+                      }
+                    }
+                  }
+                }
+                
+                offCtx.putImageData(imageData, 0, 0);
+                const processedUrl = offCanvas.toDataURL('image/png');
+                fabric.Image.fromURL(processedUrl, (processedImg) => {
+                  if (!processedImg) return;
+                  img = processedImg;
+                  const curtainType = isCurtainLeft ? 'left' : 'right';
+                  console.log(`🪟 Curtain ${curtainType} noisy background removed:`, { w, h, bgColors, threshold });
+                  continueWithImage(img);
+                }, { crossOrigin: 'anonymous' });
+                return;
+              }
+            }
           }
         } catch (e) {
           console.warn('⚠️ Edge background removal failed, proceeding without it:', e);
@@ -1234,15 +1441,12 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
     }
   }, []);
 
-  const handleSaveLayout = useCallback(() => {
+  const handleSaveLayout = useCallback(async () => {
     if (!fabricRef.current) {
       alert("Canvas is not ready.");
       return;
     }
     try {
-      const nameDefault = `Layout ${new Date().toLocaleString()}`;
-      const name = window.prompt("Name this layout:", nameDefault) || nameDefault;
-      
       // Save with all custom properties
       const json = fabricRef.current.toJSON([
         'selectable',
@@ -1258,75 +1462,154 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
         'crossOrigin'
       ]);
       
-      console.log('💾 Saving layout:', name, json);
+      const layoutData = {
+        name: `Layout ${new Date().toLocaleString()}`,
+        savedAt: Date.now(),
+        version: "1.0",
+        canvas: json
+      };
       
-      const raw = localStorage.getItem("IFM_LAYOUTS");
-      const list = raw ? JSON.parse(raw) : [];
-      list.unshift({ id: Date.now(), name, json, savedAt: Date.now() });
-      const saved = JSON.stringify(list.slice(0, 20));
-      localStorage.setItem("IFM_LAYOUTS", saved);
+      const jsonString = JSON.stringify(layoutData, null, 2);
+      const blob = new Blob([jsonString], { type: 'application/json' });
+      const filename = `layout-${Date.now()}.json`;
       
-      console.log('✅ Layout saved successfully. Total layouts:', list.length);
-      alert(`✅ Layout "${name}" saved successfully!`);
+      console.log('💾 Saving layout:', layoutData.name);
+      
+      // Try File System Access API for desktop browsers
+      if ('showSaveFilePicker' in window) {
+        try {
+          const handle = await (window as any).showSaveFilePicker({
+            suggestedName: filename,
+            types: [{
+              description: 'Layout Files',
+              accept: { 'application/json': ['.json'] }
+            }]
+          });
+          
+          const writable = await handle.createWritable();
+          await writable.write(jsonString);
+          await writable.close();
+          
+          console.log('✅ Layout saved to file system:', handle.name);
+          alert(`✅ Layout saved to ${handle.name}!`);
+          return;
+        } catch (e) {
+          if ((e as Error).name === 'AbortError') {
+            console.log('⚠️ User cancelled save');
+            return;
+          }
+          // Fall through to mobile method
+          console.log('📱 Falling back to download method');
+        }
+      }
+      
+      // Fallback for mobile and unsupported browsers
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.style.display = 'none';
+      document.body.appendChild(a);
+      a.click();
+      
+      // Cleanup
+      setTimeout(() => {
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }, 100);
+      
+      console.log('✅ Layout downloaded:', filename);
+      alert(`✅ Layout saved to Downloads folder: ${filename}`);
     } catch (e) {
       console.error("❌ Save layout failed:", e);
       alert("Failed to save layout: " + (e as Error).message);
     }
   }, []);
 
-  const handleLoadLayout = useCallback(() => {
+  const handleLoadLayout = useCallback(async () => {
     if (!fabricRef.current) {
       alert("Canvas is not ready.");
       return;
     }
+    
+    const loadFromFile = (file: File) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const text = e.target?.result as string;
+          const layoutData = JSON.parse(text);
+          
+          console.log('Loading layout:', layoutData.name || file.name);
+          
+          if (!layoutData.canvas) {
+            throw new Error("Invalid layout file: missing canvas data");
+          }
+          
+          fabricRef.current!.clear();
+          fabricRef.current!.loadFromJSON(layoutData.canvas, () => {
+            fabricRef.current!.requestRenderAll();
+            console.log('Layout loaded successfully');
+            alert(`Layout loaded from ${file.name}!`);
+          });
+        } catch (err) {
+          console.error("Failed to parse layout:", err);
+          alert("Failed to load layout: " + (err as Error).message);
+        }
+      };
+      reader.onerror = () => {
+        alert("Failed to read file.");
+      };
+      reader.readAsText(file);
+    };
+    
     try {
-      const raw = localStorage.getItem("IFM_LAYOUTS");
-      console.log('📂 Loading layouts from storage:', raw ? 'Found' : 'Not found');
+      console.log('Opening file picker...');
       
-      const list: Array<{ id:number; name:string; json:any; savedAt:number }> = raw ? JSON.parse(raw) : [];
-      
-      if (!list.length) {
-        alert("No saved layouts found. Please save a layout first.");
-        return;
+      if ('showOpenFilePicker' in window) {
+        try {
+          const [handle] = await (window as any).showOpenFilePicker({
+            types: [{
+              description: 'Layout Files',
+              accept: { 'application/json': ['.json'] }
+            }],
+            multiple: false
+          });
+          
+          const file = await handle.getFile();
+          loadFromFile(file);
+          return;
+        } catch (e) {
+          if ((e as Error).name === 'AbortError') {
+            console.log('User cancelled load');
+            return;
+          }
+          console.log('Falling back to input file method');
+        }
       }
       
-      console.log(`📋 Found ${list.length} saved layouts`);
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = '.json,application/json';
+      input.style.display = 'none';
       
-      if (list.length === 1) {
-        console.log('🔄 Loading single layout:', list[0].name);
-        fabricRef.current.clear();
-        fabricRef.current.loadFromJSON(list[0].json, () => {
-          fabricRef.current!.requestRenderAll();
-          console.log('✅ Layout loaded successfully');
-          alert(`✅ Layout "${list[0].name}" loaded!`);
-        });
-        return;
-      }
+      input.onchange = (e) => {
+        const file = (e.target as HTMLInputElement).files?.[0];
+        if (file) {
+          loadFromFile(file);
+        }
+        document.body.removeChild(input);
+      };
       
-      const options = list
-        .slice(0, 10)
-        .map((item, idx) => `${idx + 1}. ${item.name} (${new Date(item.savedAt).toLocaleString()})`)
-        .join("\n");
-      const answer = window.prompt(`Choose a layout to load (enter number):\n${options}`, "1");
+      input.oncancel = () => {
+        console.log('User cancelled load');
+        document.body.removeChild(input);
+      };
       
-      if (!answer) {
-        console.log('⚠️ User cancelled layout selection');
-        return;
-      }
+      document.body.appendChild(input);
+      input.click();
       
-      const index = Math.max(1, Math.min(10, parseInt(answer, 10))) - 1;
-      const chosen = list[index] || list[0];
-      
-      console.log(`🔄 Loading layout #${index + 1}:`, chosen.name);
-      
-      fabricRef.current.clear();
-      fabricRef.current.loadFromJSON(chosen.json, () => {
-        fabricRef.current!.requestRenderAll();
-        console.log('✅ Layout loaded successfully');
-        alert(`✅ Layout "${chosen.name}" loaded!`);
-      });
     } catch (e) {
-      console.error("❌ Load layout failed:", e);
+      console.error("Load layout failed:", e);
       alert("Failed to load layout: " + (e as Error).message);
     }
   }, []);
@@ -1440,3 +1723,4 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
 };
 
 export default CameraOverlay;
+

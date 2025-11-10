@@ -31,9 +31,16 @@ const ObjectToolbar: React.FC<ObjectToolbarProps> = ({ onAdd, onCapture, onSaveL
   const DEFAULT_IMAGES: Array<{ name: string; path: string; type: 'svg' | 'image' }> = [
     { name: "🧊 Mini Fridge", path: "/images/mini-fridge.png", type: 'image' },
     { name: "💨 Oxygen Concentrator", path: "/images/air-purifier.png", type: 'image' },
-    { name: "🛏️ Hospital Bed 1", path: "/images/hospital-bed-1.png", type: 'image' },
-    { name: "🛏️ Hospital Bed 2", path: "/images/hospital-bed-2.png", type: 'image' },
+    { name: "🛏️ Hospital Bed Left", path: "/images/hospital-bed-1.png", type: 'image' },
+    { name: "🛏️ Hospital Bed Right", path: "/images/hospital-bed-2.png", type: 'image' },
     { name: "⚕️ Oxygen Cylinder", path: "/images/oxygen-cylinder.png", type: 'image' },
+    { name: "♿ Wheelchair", path: "/images/wheelchair_PNG17844.png", type: 'image' },
+    { name: "🪟 Curtain left", path: "/images/curtain_left (1).png", type: 'image' },
+    { name: "🪟 Curtain right", path: "/images/curtain right (1).png", type: 'image' },
+    { name: "🐝 Flowers & Bees", path: "/images/creative 1.jpg", type: 'image' },
+    { name: "✈️ Kid with Plane", path: "/images/creative 2.jpg", type: 'image' },
+    { name: "🎪 Kid with Balloons", path: "/images/creative 3.jpg", type: 'image' },
+    { name: "🚂 Kids Train", path: "/images/creative 5.jpg", type: 'image' },
   ];
   return (
     <>
