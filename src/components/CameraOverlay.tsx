@@ -1629,7 +1629,8 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
               return;
             }
             
-            // Scale image to cover full canvas using object-fit: cover strategy
+            // Scale image to FIT (show full image, may have letterboxing)
+            // Changed from Math.max to Math.min to ensure entire image is visible
             const canvasWidth = canvas.getWidth();
             const canvasHeight = canvas.getHeight();
             const imgWidth = img.width || 1;
@@ -1637,14 +1638,21 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
             
             const scaleX = canvasWidth / imgWidth;
             const scaleY = canvasHeight / imgHeight;
-            // Use Math.max for full coverage (prevent letterboxing)
-            const scale = Math.max(scaleX, scaleY);
+            // Use Math.min to fit entire image within canvas (object-fit: contain)
+            const scale = Math.min(scaleX, scaleY);
             
-            // Calculate centering offsets for cropped overflow for cropped overflow
+            // Calculate centering offsets to center the fitted image
             const scaledWidth = imgWidth * scale;
             const scaledHeight = imgHeight * scale;
             const left = (canvasWidth - scaledWidth) / 2;
             const top = (canvasHeight - scaledHeight) / 2;
+            
+            console.log('📐 Image dimensions:', { 
+              original: { w: imgWidth, h: imgHeight },
+              canvas: { w: canvasWidth, h: canvasHeight },
+              scale: scale.toFixed(3),
+              positioned: { left, top, width: scaledWidth, height: scaledHeight }
+            });
             
             img.set({
               scaleX: scale,
