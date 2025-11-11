@@ -20,7 +20,10 @@ export const useTouchGestures = ({ canvas, enabled = true }: TouchGesturesOption
 
     const state = touchStateRef.current;
 
-    // Calculate distance between two touch points
+    /**
+     * Calculate Euclidean distance between two touch points
+     * Used for pinch-to-zoom gesture detection
+     */
     const getTouchDistance = (touches: TouchList): number => {
       if (touches.length < 2) return 0;
       const dx = touches[0].clientX - touches[1].clientX;
@@ -28,7 +31,10 @@ export const useTouchGestures = ({ canvas, enabled = true }: TouchGesturesOption
       return Math.sqrt(dx * dx + dy * dy);
     };
 
-    // Get center point between two touches
+    /**
+     * Calculate midpoint between two touch points
+     * Reserved for future rotation pivot implementation
+     */
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const _getTouchCenter = (touches: TouchList): { x: number; y: number } => {
       if (touches.length < 2) {
@@ -40,7 +46,10 @@ export const useTouchGestures = ({ canvas, enabled = true }: TouchGesturesOption
       };
     };
 
-    // Handle pinch-to-zoom
+    /**
+     * Initialize pinch gesture on two-finger touch
+     * Captures initial distance and object scale
+     */
     const handleTouchStart = (e: TouchEvent) => {
       if (e.touches.length === 2) {
         state.isPinching = true;
@@ -64,7 +73,7 @@ export const useTouchGestures = ({ canvas, enabled = true }: TouchGesturesOption
           const scaleDelta = currentDistance / state.lastDistance;
           const newScale = state.lastScale * scaleDelta;
 
-          // Limit scale range for better UX
+          // Clamp scale to prevent over-zoom or invisible objects
           const minScale = 0.1;
           const maxScale = 5;
           const clampedScale = Math.max(minScale, Math.min(maxScale, newScale));
@@ -82,38 +91,38 @@ export const useTouchGestures = ({ canvas, enabled = true }: TouchGesturesOption
         state.isPinching = false;
         state.lastDistance = 0;
         
-        // Update lastScale for next pinch
+        // Persist final scale for next pinch gesture
         const activeObj = canvas.getActiveObject();
         if (activeObj) {
           state.lastScale = activeObj.scaleX || 1;
         }
       }
 
-      // Double-tap to fit object
+      // Double-tap to reset scale to 1:1
       if (e.touches.length === 0 && e.changedTouches.length === 1) {
         const now = Date.now();
         const timeSinceLastTap = now - state.lastTap;
 
         if (timeSinceLastTap < state.doubleTapDelay) {
-          // Double tap detected
+          // Double-tap detected, reset object scale
           const activeObj = canvas.getActiveObject();
           if (activeObj) {
-            // Reset to default scale
+            // Reset scale to original size
             activeObj.scale(1);
             canvas.requestRenderAll();
           }
-          state.lastTap = 0; // Reset to prevent triple-tap
+          state.lastTap = 0; // Prevent triple-tap trigger
         } else {
           state.lastTap = now;
         }
       }
     };
 
-    // Get the canvas element
+    // Attach listeners to canvas DOM element
     const canvasElement = canvas.getElement();
     if (!canvasElement) return;
 
-    // Add touch event listeners
+    // Passive: false required to preventDefault on touchmove
     canvasElement.addEventListener('touchstart', handleTouchStart, { passive: false });
     canvasElement.addEventListener('touchmove', handleTouchMove, { passive: false });
     canvasElement.addEventListener('touchend', handleTouchEnd, { passive: false });

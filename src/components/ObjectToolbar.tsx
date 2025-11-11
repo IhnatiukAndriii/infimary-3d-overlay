@@ -13,7 +13,7 @@ type ObjectToolbarProps = {
 const ObjectToolbar: React.FC<ObjectToolbarProps> = ({ onAdd, onCapture, onSaveLayout, onLoadLayout, onDeleteSelected, onOpenGallery }) => {
   const [menuOpen, setMenuOpen] = React.useState(false);
   
-  // Debug log
+  // Development logging for menu state transitions
   React.useEffect(() => {
     console.log('🔍 Menu state changed:', menuOpen);
   }, [menuOpen]);
@@ -46,7 +46,7 @@ const ObjectToolbar: React.FC<ObjectToolbarProps> = ({ onAdd, onCapture, onSaveL
   ];
   return (
     <>
-      {/* Backdrop overlay */}
+      {/* Semi-transparent backdrop for menu overlay */}
       {menuOpen && (
         <div 
           className="objectToolbar__backdrop"

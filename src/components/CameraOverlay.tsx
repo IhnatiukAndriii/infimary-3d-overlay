@@ -29,7 +29,7 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
   const [facingMode, setFacingMode] = useState<"user" | "environment">("environment");
   const [svgLibrary, setSvgLibrary] = useState<SvgAsset[]>([]);
 
-  // Enable touch gestures for mobile
+  // Initialize touch gesture support for mobile pinch-to-zoom and rotation
   useTouchGestures({ canvas: fabricRef.current, enabled: true });
 
   const updateCanvasSize = useCallback(() => {
@@ -68,7 +68,8 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
     applySize(fabricCanvas.getSelectionElement());
     const wrapperEl = internals.wrapperEl ?? undefined;
     applySize(wrapperEl);
-    // Force absolute positioning to fully cover host container
+    
+    // Position Fabric.js wrapper to cover entire parent container
     if (wrapperEl) {
       wrapperEl.style.position = 'absolute';
       wrapperEl.style.top = '0';
@@ -88,7 +89,7 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
       upperEl.style.left = '0';
     }
 
-    // Ensure Fabric internal sizes align with CSS sizes
+    // Synchronize Fabric.js internal dimensions with DOM element sizes
     fabricCanvas.setDimensions({ width: nextWidth, height: nextHeight });
     fabricCanvas.setWidth(nextWidth);
     fabricCanvas.setHeight(nextHeight);
@@ -131,7 +132,7 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
       if (!raw) { return; }
       const parsed = JSON.parse(raw) as CapturedPhoto[];
       if (!Array.isArray(parsed)) {
-        // Invalid data, ignore
+        return; // Invalid format, skip
       }
     } catch (e) {
       console.warn("Failed to parse gallery", e);
@@ -158,7 +159,7 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
     let currentPlayPromise: Promise<void> | null = null;
     cancelPlayRef.current = false;
     
-    // Capture ref at the start of the effect for cleanup
+    // Capture video element reference early for reliable cleanup
     const videoEl = videoRef.current;
 
     const mediaDevices = navigator.mediaDevices;
@@ -271,7 +272,7 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
       isMounted = false;
       cancelPlayRef.current = true;
 
-      // Use the stable videoEl captured at effect start
+      // Reference video element captured at effect initialization for cleanup safety
       const finishingPlayPromise = currentPlayPromise;
       const currentStream = streamRef.current;
 
@@ -326,7 +327,7 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
       return;
     }
 
-    // Set initial size BEFORE Fabric wraps the canvas, to avoid a small default 300x150 wrapper
+    // Pre-configure canvas dimensions before Fabric.js initialization to prevent default 300x150 size
     const host = canvasEl.parentElement;
     const bounds = host?.getBoundingClientRect();
     const initW = Math.max(1, Math.round(bounds?.width ?? window.innerWidth));
@@ -348,12 +349,12 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
       fireRightClick: false,
       fireMiddleClick: false,
       uniformScaling: false,
-      // Performance optimizations
+      // Configure Fabric.js performance optimizations
       perPixelTargetFind: false,
       targetFindTolerance: 4,
     });
 
-    // Custom delete control (X button on top-right)
+    // Define custom delete control with visual X icon positioned top-right
     const deleteIcon = "data:image/svg+xml,%3C%3Fxml version='1.0' encoding='utf-8'%3F%3E%3C!DOCTYPE svg PUBLIC '-//W3C//DTD SVG 1.1//EN' 'http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd'%3E%3Csvg version='1.1' id='Ebene_1' xmlns='http://www.w3.org/2000/svg' xmlns:xlink='http://www.w3.org/1999/xlink' x='0px' y='0px' width='595.275px' height='595.275px' viewBox='200 215 230 470' xml:space='preserve'%3E%3Ccircle style='fill:%23F44336;' cx='299.76' cy='439.067' r='218.516'/%3E%3Cg%3E%3Crect x='267.162' y='307.978' transform='matrix(0.7071 -0.7071 0.7071 0.7071 -222.6202 340.6915)' style='fill:white;' width='65.545' height='262.18'/%3E%3Crect x='266.988' y='308.153' transform='matrix(0.7071 0.7071 -0.7071 0.7071 398.3889 -83.3116)' style='fill:white;' width='65.544' height='262.179'/%3E%3C/g%3E%3C/svg%3E";
     
     const deleteImg = document.createElement('img');
@@ -396,7 +397,7 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
       ctx.imageSmoothingEnabled = false;
     }
 
-    // Performance: throttled render during transformations
+    // Implement throttled rendering during object transformations for performance
     let isTransforming = false;
     let rafId: number | null = null;
 
@@ -408,7 +409,7 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
       });
     }
 
-    // Optimized event handlers
+    // Attach optimized event handlers with RAF-based throttling
     canvas.on("object:added", () => fabricRef.current?.requestRenderAll());
     canvas.on("object:removed", () => fabricRef.current?.requestRenderAll());
     
@@ -478,7 +479,7 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
   const handleAddObject = useCallback((type: string, imageSrc?: string) => {
     if (!fabricRef.current) return;
     
-    // Detect mobile device
+    // Detect mobile viewport for adaptive scaling
     const isMobile = window.innerWidth <= 768;
     const scaleFactor = isMobile ? 0.6 : 1.0;
     
@@ -531,7 +532,7 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
           const fileName = imageSrc.toLowerCase();
           const isCylinder = fileName.includes('oxygen-cylinder') || fileName.includes('cylinder');
           const isPurifier = fileName.includes('air-purifier') || fileName.includes('concentrator');
-          // Only target the specific mini-fridge asset to avoid affecting other objects
+          // Apply background removal only to mini-fridge PNG asset
           const isFridge = fileName.includes('mini-fridge');
           const isBed1 = fileName.includes('hospital-bed-1');
           const isBed2 = fileName.includes('hospital-bed-2');
@@ -541,7 +542,7 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
           const isHospitalCurtain1 = fileName.includes('hospital_curtain.png');
           const isHospitalCurtain2 = fileName.includes('hospital_curtain2.png');
 
-          // Mini Fridge conservative edge/background trimming
+          // Mini-fridge: edge-based background removal algorithm
           if (isFridge) {
             const element = img.getElement();
             const w = (element as HTMLImageElement).naturalWidth || img.width || 0;
@@ -583,20 +584,20 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
                   const dr = r - c.r, dg = g - c.g, db = b - c.b;
                   return Math.sqrt(dr * dr + dg * dg + db * db);
                 };
-                // Further increased aggressiveness for mini-fridge only.
-                // Runtime override possible via:
+                // Enhanced removal aggressiveness for mini-fridge asset
+                // Runtime configuration via window global:
                 //   window.IFM_FRIDGE_TRIM = { distance?: number, brightness?: number, hardMode?: boolean, expand?: number }
-                // distance: cluster distance threshold (default 44)
-                // brightness: gate for bright removal (default 210)
-                // hardMode: adds neighbor expansion + mid-bright removal
-                // expand: extra neighbor radius (1 or 2) used when hardMode
+                // distance: color distance threshold for background detection
+                // brightness: minimum brightness threshold for removal
+                // hardMode: enables neighbor expansion and mid-tone removal
+                // expand: neighbor expansion radius when hardMode enabled
                 const cfg: any = (window as any).IFM_FRIDGE_TRIM || {};
                 const fridgeBaseThreshold = Math.max(10, Math.min(80, Number(cfg.distance ?? 52))); // even higher trim default
                 const brightnessGate = Math.max(140, Math.min(255, Number(cfg.brightness ?? 200))); // broader bright window
                 const hardMode = Boolean(cfg.hardMode); // off by default
                 const expandRadius = Math.max(1, Math.min(3, Number(cfg.expand ?? (hardMode ? 2 : 1))));
 
-                // First pass: direct color distance & ultra-bright handling
+                // Pass 1: Remove pixels matching background colors by distance threshold
                 const toRemove = new Uint8Array(w * h); // mark pixels to remove for second pass logic
                 for (let i = 0; i < data.length; i += 4) {
                   const r = data[i], g = data[i + 1], b = data[i + 2];
@@ -613,7 +614,7 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
                   }
                 }
 
-                // Second pass (hardMode only): expand transparent region into near-bright border pixels.
+                // Pass 2 (hardMode): Expand transparency into neighboring bright pixels
                 if (hardMode) {
                   const idxOf = (x: number, y: number) => (x + y * w) * 4;
                   for (let y = 1; y < h - 1; y++) {
@@ -623,7 +624,7 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
                       const r = data[base], g = data[base + 1], b = data[base + 2];
                       const brightness = (r + g + b) / 3;
                       if (brightness < (brightnessGate - 25)) continue; // only act on fairly bright
-                      // Check neighbors within expandRadius for already removed pixels
+                      // Detect nearby removed pixels within expansion radius
                       let nearRemoved = 0;
                       for (let dy = -expandRadius; dy <= expandRadius && nearRemoved < 2; dy++) {
                         const ny = y + dy;
@@ -636,7 +637,7 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
                         }
                       }
                       if (nearRemoved >= 1) { // relax expansion trigger
-                        // Re-check distance against dominant bg colors with relaxed threshold
+                        // Apply relaxed threshold to neighbor pixels for expansion
                         for (const c of bgColors) {
                           const d = dist(r, g, b, c);
                           if (d <= fridgeBaseThreshold + 16) { // stronger expansion
@@ -695,7 +696,7 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
                 const imageData = offCtx.getImageData(0, 0, w, h);
                 const data = imageData.data;
 
-                // Collect border pixels (sample every 6px) to infer background clusters
+                // Sample border pixels to identify dominant background colors
                 const bgSamples: Array<[number, number, number]> = [];
                 const sampleStep = 6;
                 for (let x = 0; x < w; x += sampleStep) {
@@ -711,7 +712,7 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
                   bgSamples.push([data[rightIdx], data[rightIdx + 1], data[rightIdx + 2]]);
                 }
 
-                // Derive representative colors (simple binning by rounding to nearest 8)
+                // Bin sampled colors into clusters for background identification
                 const bins = new Map<string, { r: number; g: number; b: number; count: number }>();
                 for (const [r, g, b] of bgSamples) {
                   const key = `${Math.round(r / 8) * 8}|${Math.round(g / 8) * 8}|${Math.round(b / 8) * 8}`;
@@ -722,22 +723,22 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
                   .sort((a, b) => b.count - a.count)
                   .slice(0, 5); // top 5 frequent border colors
 
-                // Distance function (Euclidean in RGB)
+                // Calculate Euclidean distance in RGB color space
                 const dist = (r: number, g: number, b: number, c: { r: number; g: number; b: number }) => {
                   const dr = r - c.r, dg = g - c.g, db = b - c.b;
                   return Math.sqrt(dr * dr + dg * dg + db * db);
                 };
 
-                // Conservative threshold: only remove very near colors. Oxygen cylinder often sits on bright white.
-                // If the dominant background is extremely bright, narrow threshold further.
+                // Conservative threshold for bright backgrounds typical of medical equipment
+                // Reduce threshold dynamically for very bright backgrounds
                 const avgBrightness = bgColors.reduce((sum, c) => sum + (c.r + c.g + c.b) / 3, 0) / Math.max(1, bgColors.length);
                 const baseThreshold = avgBrightness > 240 ? 18 : 26; // tighter when very bright
                 const threshold = baseThreshold - 4; // more conservative for cylinder
 
-                // Pass 1: mark background pixels
+                // Pass 1: Identify and mark background pixels for removal
                 for (let i = 0; i < data.length; i += 4) {
                   const r = data[i], g = data[i + 1], b = data[i + 2];
-                  // Quick reject: if not bright enough, keep
+                  // Skip dark pixels to preserve equipment detail
                   if (r < 225 && g < 225 && b < 225) continue;
                   for (const c of bgColors) {
                     if (dist(r, g, b, c) <= threshold) {
@@ -747,8 +748,8 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
                   }
                 }
 
-                // Optional clean-up: restore semi-transparent isolated dark pixels (avoid accidental holes)
-                // Simple heuristic: if a pixel is transparent but neighbors (up to 4) are opaque and darker, restore it.
+                // Pass 2: Restore isolated transparent pixels surrounded by opaque neighbors
+                // Restore if 3+ neighbors are opaque and darker than threshold
                 const neighborOffsets = [
                   -4 * w, // up
                   4 * w,  // down
@@ -770,7 +771,7 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
                         }
                       }
                       if (opaqueDarkNeighbors >= 3) {
-                        // restore
+                        // Restore pixel opacity
                         data[idx + 3] = 255;
                       }
                     }
@@ -779,7 +780,7 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
 
                 offCtx.putImageData(imageData, 0, 0);
                 const processedUrl = offCanvas.toDataURL('image/png');
-                // Replace original image with processed version before adding to canvas.
+                // Swap original image with processed version before canvas addition
                 fabric.Image.fromURL(processedUrl, (processedImg) => {
                   if (!processedImg) return;
                   img = processedImg; // reassign reference to continue normal flow
@@ -797,7 +798,7 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
             }
           }
 
-          // For air-purifier: restore minimal color-based background removal (white/light-gray/beige)
+          // Air purifier: Apply minimal color-based background removal
           if (isPurifier) {
             const Filters: any = (fabric.Image as any).filters;
             const hasRemove = Filters && typeof Filters.RemoveColor === 'function';
@@ -813,12 +814,12 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
             }
           }
 
-          // For hospital beds: apply safe near-white trimming only for bed-1 and bed-2 PNGs
+          // Hospital beds: Apply conservative near-white background removal
           if (isBed1 || isBed2) {
             try {
               const Filters: any = (fabric.Image as any).filters;
               if (Filters && typeof Filters.RemoveColor === 'function') {
-                // Allow runtime override: window.IFM_BED_TRIM = { enabled?: boolean, distances?: number[] }
+                // Runtime configuration: window.IFM_BED_TRIM for threshold control
                 const cfg: any = (window as any).IFM_BED_TRIM || {};
                 if (cfg.enabled === false) {
                   console.log('🛏️ Bed trim disabled via IFM_BED_TRIM');
@@ -837,7 +838,7 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
             } catch {}
           }
 
-          // For wheelchair: apply white background removal
+          // Wheelchair: Aggressive white/gray background removal for noisy PNG
           if (isWheelchair) {
             const element = img.getElement();
             const w = (element as HTMLImageElement).naturalWidth || img.width || 0;
@@ -852,7 +853,7 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
                 const imageData = offCtx.getImageData(0, 0, w, h);
                 const data = imageData.data;
                 
-                // Sample border colors to detect background
+                // Sample border pixels to identify background color clusters
                 const borderSamples: Array<[number, number, number]> = [];
                 const sampleStep = 5;
                 for (let x = 0; x < w; x += sampleStep) {
@@ -868,7 +869,7 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
                   borderSamples.push([data[right], data[right + 1], data[right + 2]]);
                 }
                 
-                // Find dominant bright background colors
+                // Extract dominant bright colors from border samples
                 const bins = new Map<string, { r: number; g: number; b: number; count: number }>();
                 for (const [r, g, b] of borderSamples) {
                   const key = `${Math.round(r / 8) * 8}|${Math.round(g / 8) * 8}|${Math.round(b / 8) * 8}`;
@@ -885,7 +886,7 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
                   return Math.sqrt(dr * dr + dg * dg + db * db);
                 };
                 
-                // Aggressive removal for noisy white/gray background
+                // Apply aggressive threshold for noisy backgrounds
                 const threshold = 55; // increased for noisy backgrounds
                 const brightnessGate = 190; // remove bright pixels
                 
@@ -905,7 +906,7 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
                   }
                 }
                 
-                // Restore isolated opaque pixels surrounded by transparency
+                // Restore isolated object pixels misidentified as background
                 const neighborOffsets = [ -4 * w, 4 * w, -4, 4 ];
                 for (let y = 1; y < h - 1; y++) {
                   for (let x = 1; x < w - 1; x++) {
@@ -940,7 +941,7 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
             }
           }
 
-          // For curtains: apply white background removal
+          // Curtains: Apply white background removal with soft threshold
           if (isCurtainLeft || isCurtainRight || isHospitalCurtain1 || isHospitalCurtain2) {
             const element = img.getElement();
             const w = (element as HTMLImageElement).naturalWidth || img.width || 0;
@@ -957,7 +958,7 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
                 
                 const isHospitalCurtain = isHospitalCurtain1 || isHospitalCurtain2;
                 
-                // Sample border colors
+                // Sample border region to identify background
                 const borderSamples: Array<[number, number, number]> = [];
                 const sampleStep = 5;
                 
@@ -991,11 +992,11 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
                   return Math.sqrt(dr * dr + dg * dg + db * db);
                 };
                 
-                // Very soft threshold for hospital curtains to avoid holes
+                // Use conservative threshold to preserve curtain detail
                 const threshold = isHospitalCurtain ? 8 : 55;
                 const brightnessGate = isHospitalCurtain ? 250 : 190;
                 
-                // First pass: remove bright background
+                // Pass 1: Remove bright background pixels
                 for (let i = 0; i < data.length; i += 4) {
                   const r = data[i], g = data[i + 1], b = data[i + 2];
                   const brightness = (r + g + b) / 3;
@@ -1012,7 +1013,7 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
                   }
                 }
                 
-                // Third pass: restore good pixels and clean isolated artifacts
+                // Pass 2: Restore isolated object pixels and clean artifacts
                 const neighborOffsets = [ -4 * w, 4 * w, -4, 4 ];
                 for (let y = 1; y < h - 1; y++) {
                   for (let x = 1; x < w - 1; x++) {
@@ -1051,11 +1052,11 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
           console.warn('⚠️ Edge background removal failed, proceeding without it:', e);
         }
 
-        // Fallback path if not processed above
+        // Default path for assets not requiring special processing
         continueWithImage(img);
 
         function continueWithImage(finalImg: fabric.Image) {
-          // Calculate optimal scale based on image size
+          // Calculate scale factor for responsive canvas fit
           const maxDimension = Math.max(finalImg.width || 0, finalImg.height || 0);
           const targetSize = isMobile ? 200 : 300;
           const autoScale = maxDimension > 0 ? targetSize / maxDimension : scaleFactor;
@@ -1104,17 +1105,17 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
         })
         .then((svgText) => {
           fabric.loadSVGFromString(svgText, (objects, options) => {
-            // Heuristic: drop giant white/black (and near-white/near-black) background shapes before grouping
+            // Remove large white/black background rectangles from SVG before grouping
             try {
               const toColorString = (fill: any) => (typeof fill === 'string' ? String(fill).toLowerCase() : '');
               const parseRGB = (fill: any): {r:number;g:number;b:number}|null => {
                 try {
                   if (!fill || typeof fill !== 'string') return null;
                   const f = toColorString(fill).trim();
-                  // Named colors
+                  // Handle named color values (white, black)
                   if (f === 'white') return { r:255, g:255, b:255 };
                   if (f === 'black') return { r:0, g:0, b:0 };
-                  // #rgb or #rrggbb
+                  // Parse hex color codes (#rgb, #rrggbb)
                   if (/^#([0-9a-f]{3}){1,2}$/i.test(f)) {
                     let r:number, g:number, b:number;
                     if (f.length === 4) {
@@ -1128,7 +1129,7 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
                     }
                     return { r,g,b };
                   }
-                  // rgb(a)
+                  // Parse RGB/RGBA functional notation
                   const m = f.match(/^rgba?\((\d+)\s*,\s*(\d+)\s*,\s*(\d+)/);
                   if (m) return { r: +m[1], g: +m[2], b: +m[3] };
                 } catch {}
@@ -1147,7 +1148,7 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
                 return nearWhite || nearBlack;
               };
 
-              // Compute overall bounding box across all objects
+              // Calculate global bounding box for all SVG elements
               let minX = Number.POSITIVE_INFINITY;
               let minY = Number.POSITIVE_INFINITY;
               let maxX = Number.NEGATIVE_INFINITY;
@@ -1168,7 +1169,7 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
 
               const filtered = (objects as any[]).filter((o) => {
                 if (!o) return false;
-                // Only consider likely background primitives
+                // Filter for background-type shapes (rect, path, polygon)
                 const typeOk = o.type === 'rect' || o.type === 'path' || o.type === 'polygon' || o.type === 'ellipse' || o.type === 'circle';
                 if (typeOk && isNearWhiteOrBlack((o as any).fill)) {
                   const br = getBR(o);
@@ -1184,7 +1185,7 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
               });
               objects = filtered as any;
 
-              // If there are internal pure-black fills left, prefer raster fallback with RemoveColor to clear holes
+              // Fallback to raster processing if pure black fills detected
               const hasPureBlackFill = (fill: any) => {
                 const rgb = parseRGB(fill);
                 return !!rgb && rgb.r <= 5 && rgb.g <= 5 && rgb.b <= 5;
@@ -1459,14 +1460,14 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
     const video = videoRef.current;
     const fabricCanvas = fabricRef.current;
     
-    // Check if video is ready
+    // Validate video stream readiness before capture
     if (!videoReady || video.readyState < 2 || video.paused) {
       alert("Video not ready yet, please try again");
       return;
     }
     
     try {
-      // Create composite image: video + fabric objects
+      // Composite video frame with canvas overlay
       requestAnimationFrame(async () => {
         const videoWidth = video.videoWidth;
         const videoHeight = video.videoHeight;
@@ -1478,7 +1479,7 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
           return;
         }
 
-        // Create temporary canvas for compositing
+        // Initialize temporary canvas for image composition
         const tempCanvas = document.createElement("canvas");
         tempCanvas.width = videoWidth;
         tempCanvas.height = videoHeight;
@@ -1494,12 +1495,12 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
         }
 
         try {
-          // Draw video background
+          // Render video frame to canvas
           ctx.fillStyle = "#000000";
           ctx.fillRect(0, 0, videoWidth, videoHeight);
           ctx.drawImage(video, 0, 0, videoWidth, videoHeight);
           
-          // Draw fabric overlay with proper scaling
+          // Render Fabric.js canvas overlay with scale correction
           const fabricElement = fabricCanvas.getElement();
           const fabricWidth = fabricElement.width;
           const fabricHeight = fabricElement.height;
@@ -1516,7 +1517,7 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
             ctx.restore();
           }
 
-          // Convert to PNG (lossless for better quality)
+          // Export as PNG for lossless quality
           const layoutImage = tempCanvas.toDataURL("image/png", 1.0);
           
           if (layoutImage.length < 1000) {
@@ -1524,7 +1525,7 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
             return;
           }
           
-          // Create blob for download
+          // Convert canvas to blob for file operations
           const base64Data = layoutImage.split(',')[1];
           const byteCharacters = atob(base64Data);
           const byteArrays = [];
@@ -1543,7 +1544,7 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
           
           console.log('💾 Saving layout image:', filename);
           
-          // Try File System Access API for desktop browsers
+          // Attempt modern File System Access API for save dialog
           if ('showSaveFilePicker' in window) {
             try {
               const handle = await (window as any).showSaveFilePicker({
@@ -1570,7 +1571,7 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
             }
           }
           
-          // Fallback for mobile and unsupported browsers
+          // Fallback to download attribute for compatibility
           const url = URL.createObjectURL(blob);
           const a = document.createElement('a');
           a.href = url;
@@ -1579,7 +1580,7 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
           document.body.appendChild(a);
           a.click();
           
-          // Cleanup
+          // Clean up temporary DOM elements and object URLs
           setTimeout(() => {
             document.body.removeChild(a);
             URL.revokeObjectURL(url);
@@ -1618,17 +1619,17 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
           
           const canvas = fabricRef.current!;
           
-          // Clear all existing objects first
+          // Clear canvas before loading background
           canvas.clear();
           
-          // Set the image as static background
+          // Load image as non-interactive background layer
           fabric.Image.fromURL(dataUrl, (img) => {
             if (!img || !img.width || !img.height) {
               alert('Failed to load layout image.');
               return;
             }
             
-            // Scale image to fit canvas
+            // Scale image to cover full canvas using object-fit: cover strategy
             const canvasWidth = canvas.getWidth();
             const canvasHeight = canvas.getHeight();
             const imgWidth = img.width || 1;
@@ -1636,13 +1637,20 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
             
             const scaleX = canvasWidth / imgWidth;
             const scaleY = canvasHeight / imgHeight;
-            const scale = Math.min(scaleX, scaleY);
+            // Use Math.max for full coverage (prevent letterboxing)
+            const scale = Math.max(scaleX, scaleY);
+            
+            // Calculate centering offsets for cropped overflow for cropped overflow
+            const scaledWidth = imgWidth * scale;
+            const scaledHeight = imgHeight * scale;
+            const left = (canvasWidth - scaledWidth) / 2;
+            const top = (canvasHeight - scaledHeight) / 2;
             
             img.set({
               scaleX: scale,
               scaleY: scale,
-              left: 0,
-              top: 0,
+              left: left,
+              top: top,
               selectable: false,   // Cannot be selected
               evented: false,      // Cannot be interacted with
               hasControls: false,  // No controls
@@ -1652,13 +1660,15 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
               lockRotation: true,
               lockScalingX: true,
               lockScalingY: true,
+              originX: 'left',
+              originY: 'top',
             });
             
-            // Add as background (first layer)
+            // Insert as bottom layer (z-index 0)
             canvas.add(img);
             img.sendToBack(); // Ensure it stays at the back
             
-            // Set canvas background to cover any gaps
+            // Set fallback background color (hidden by image)
             canvas.backgroundColor = '#000000';
             
             canvas.requestRenderAll();
@@ -1805,7 +1815,7 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
         {svgLibrary.length > 0 && (
           <div className={styles.svgLibrary}>
             {svgLibrary.map((asset) => {
-              // Detect if it's SVG or raster image (PNG/JPG)
+              // Determine asset type from MIME for appropriate loader
               const isSvg = asset.dataUrl.includes('svg');
               const type = isSvg ? "svg" : "image";
               return (
