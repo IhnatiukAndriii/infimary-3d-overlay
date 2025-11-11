@@ -37,6 +37,8 @@ const ObjectToolbar: React.FC<ObjectToolbarProps> = ({ onAdd, onCapture, onSaveL
     { name: "♿ Wheelchair", path: "/images/wheelchair_PNG17844.png", type: 'image' },
     { name: "🪟 Curtain left", path: "/images/curtain_left (1).png", type: 'image' },
     { name: "🪟 Curtain right", path: "/images/curtain right (1).png", type: 'image' },
+    { name: "🏥 Hospital Curtain 1", path: "/images/hospital_curtain.png", type: 'image' },
+    { name: "🏥 Hospital Curtain 2", path: "/images/hospital_curtain2.png", type: 'image' },
     { name: "🐝 Flowers & Bees", path: "/images/creative 1.jpg", type: 'image' },
     { name: "✈️ Kid with Plane", path: "/images/creative 2.jpg", type: 'image' },
     { name: "🎪 Kid with Balloons", path: "/images/creative 3.jpg", type: 'image' },
@@ -153,17 +155,17 @@ const ObjectToolbar: React.FC<ObjectToolbarProps> = ({ onAdd, onCapture, onSaveL
           type="button" 
           className="objectToolbar__btn objectToolbar__btn--save"
           onClick={onSaveLayout}
-          title="Save current layout to browser storage"
+          title="Save current view as PNG image (static snapshot)"
         >
-          💾 Save Layout
+          💾 Save as Image
         </button>
         <button 
           type="button" 
           className="objectToolbar__btn objectToolbar__btn--load"
           onClick={onLoadLayout}
-          title="Load previously saved layout"
+          title="Load layout image as static background (objects remain editable)"
         >
-          📂 Load Layout
+          📂 Load Background
         </button>
         <button 
           type="button" 

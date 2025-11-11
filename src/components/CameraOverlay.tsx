@@ -538,6 +538,8 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
           const isWheelchair = fileName.includes('wheelchair');
           const isCurtainLeft = fileName.includes('curtain_left') || fileName.includes('curtain left');
           const isCurtainRight = fileName.includes('curtain right') || fileName.includes('curtain_right');
+          const isHospitalCurtain1 = fileName.includes('hospital_curtain.png');
+          const isHospitalCurtain2 = fileName.includes('hospital_curtain2.png');
 
           // Mini Fridge conservative edge/background trimming
           if (isFridge) {
@@ -939,7 +941,7 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
           }
 
           // For curtains: apply white background removal
-          if (isCurtainLeft || isCurtainRight) {
+          if (isCurtainLeft || isCurtainRight || isHospitalCurtain1 || isHospitalCurtain2) {
             const element = img.getElement();
             const w = (element as HTMLImageElement).naturalWidth || img.width || 0;
             const h = (element as HTMLImageElement).naturalHeight || img.height || 0;
@@ -953,9 +955,12 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
                 const imageData = offCtx.getImageData(0, 0, w, h);
                 const data = imageData.data;
                 
+                const isHospitalCurtain = isHospitalCurtain1 || isHospitalCurtain2;
+                
                 // Sample border colors
                 const borderSamples: Array<[number, number, number]> = [];
                 const sampleStep = 5;
+                
                 for (let x = 0; x < w; x += sampleStep) {
                   const top = (x + 0 * w) * 4;
                   const bottom = (x + (h - 1) * w) * 4;
@@ -975,6 +980,7 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
                   const ex = bins.get(key);
                   if (ex) ex.count++; else bins.set(key, { r, g, b, count: 1 });
                 }
+                
                 const bgColors = Array.from(bins.values())
                   .filter(c => (c.r + c.g + c.b) / 3 > 200)
                   .sort((a, b) => b.count - a.count)
@@ -985,9 +991,11 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
                   return Math.sqrt(dr * dr + dg * dg + db * db);
                 };
                 
-                const threshold = 55;
-                const brightnessGate = 190;
+                // Very soft threshold for hospital curtains to avoid holes
+                const threshold = isHospitalCurtain ? 8 : 55;
+                const brightnessGate = isHospitalCurtain ? 250 : 190;
                 
+                // First pass: remove bright background
                 for (let i = 0; i < data.length; i += 4) {
                   const r = data[i], g = data[i + 1], b = data[i + 2];
                   const brightness = (r + g + b) / 3;
@@ -1004,6 +1012,7 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
                   }
                 }
                 
+                // Third pass: restore good pixels and clean isolated artifacts
                 const neighborOffsets = [ -4 * w, 4 * w, -4, 4 ];
                 for (let y = 1; y < h - 1; y++) {
                   for (let x = 1; x < w - 1; x++) {
@@ -1030,8 +1039,8 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
                 fabric.Image.fromURL(processedUrl, (processedImg) => {
                   if (!processedImg) return;
                   img = processedImg;
-                  const curtainType = isCurtainLeft ? 'left' : 'right';
-                  console.log(`🪟 Curtain ${curtainType} noisy background removed:`, { w, h, bgColors, threshold });
+                  const curtainType = isCurtainLeft ? 'left' : isCurtainRight ? 'right' : isHospitalCurtain1 ? '1' : '2';
+                  console.log(`🪟 Curtain ${curtainType} background removed:`, { w, h, bgColors, threshold });
                   continueWithImage(img);
                 }, { crossOrigin: 'anonymous' });
                 return;
@@ -1442,89 +1451,152 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
   }, []);
 
   const handleSaveLayout = useCallback(async () => {
-    if (!fabricRef.current) {
+    if (!fabricRef.current || !videoRef.current || !fabricCanvasRef.current) {
       alert("Canvas is not ready.");
       return;
     }
+    
+    const video = videoRef.current;
+    const fabricCanvas = fabricRef.current;
+    
+    // Check if video is ready
+    if (!videoReady || video.readyState < 2 || video.paused) {
+      alert("Video not ready yet, please try again");
+      return;
+    }
+    
     try {
-      // Save with all custom properties
-      const json = fabricRef.current.toJSON([
-        'selectable',
-        'evented',
-        'shadow',
-        'opacity',
-        'cornerStyle',
-        'objectCaching',
-        'statefullCache',
-        'noScaleCache',
-        'cacheProperties',
-        'src',
-        'crossOrigin'
-      ]);
-      
-      const layoutData = {
-        name: `Layout ${new Date().toLocaleString()}`,
-        savedAt: Date.now(),
-        version: "1.0",
-        canvas: json
-      };
-      
-      const jsonString = JSON.stringify(layoutData, null, 2);
-      const blob = new Blob([jsonString], { type: 'application/json' });
-      const filename = `layout-${Date.now()}.json`;
-      
-      console.log('💾 Saving layout:', layoutData.name);
-      
-      // Try File System Access API for desktop browsers
-      if ('showSaveFilePicker' in window) {
-        try {
-          const handle = await (window as any).showSaveFilePicker({
-            suggestedName: filename,
-            types: [{
-              description: 'Layout Files',
-              accept: { 'application/json': ['.json'] }
-            }]
-          });
-          
-          const writable = await handle.createWritable();
-          await writable.write(jsonString);
-          await writable.close();
-          
-          console.log('✅ Layout saved to file system:', handle.name);
-          alert(`✅ Layout saved to ${handle.name}!`);
+      // Create composite image: video + fabric objects
+      requestAnimationFrame(async () => {
+        const videoWidth = video.videoWidth;
+        const videoHeight = video.videoHeight;
+
+        console.log("💾 Saving layout as image:", { videoWidth, videoHeight });
+
+        if (videoWidth === 0 || videoHeight === 0) {
+          alert("Cannot save layout - invalid video dimensions");
           return;
-        } catch (e) {
-          if ((e as Error).name === 'AbortError') {
-            console.log('⚠️ User cancelled save');
+        }
+
+        // Create temporary canvas for compositing
+        const tempCanvas = document.createElement("canvas");
+        tempCanvas.width = videoWidth;
+        tempCanvas.height = videoHeight;
+        
+        const ctx = tempCanvas.getContext("2d", { 
+          alpha: false,
+          willReadFrequently: false 
+        });
+        
+        if (!ctx) {
+          alert("Error creating canvas");
+          return;
+        }
+
+        try {
+          // Draw video background
+          ctx.fillStyle = "#000000";
+          ctx.fillRect(0, 0, videoWidth, videoHeight);
+          ctx.drawImage(video, 0, 0, videoWidth, videoHeight);
+          
+          // Draw fabric overlay with proper scaling
+          const fabricElement = fabricCanvas.getElement();
+          const fabricWidth = fabricElement.width;
+          const fabricHeight = fabricElement.height;
+          
+          if (fabricWidth > 0 && fabricHeight > 0) {
+            fabricCanvas.renderAll();
+            
+            const scaleX = videoWidth / fabricWidth;
+            const scaleY = videoHeight / fabricHeight;
+            
+            ctx.save();
+            ctx.scale(scaleX, scaleY);
+            ctx.drawImage(fabricElement, 0, 0);
+            ctx.restore();
+          }
+
+          // Convert to PNG (lossless for better quality)
+          const layoutImage = tempCanvas.toDataURL("image/png", 1.0);
+          
+          if (layoutImage.length < 1000) {
+            alert("Image seems empty. Length: " + layoutImage.length);
             return;
           }
-          // Fall through to mobile method
-          console.log('📱 Falling back to download method');
+          
+          // Create blob for download
+          const base64Data = layoutImage.split(',')[1];
+          const byteCharacters = atob(base64Data);
+          const byteArrays = [];
+          
+          for (let offset = 0; offset < byteCharacters.length; offset += 1024) {
+            const slice = byteCharacters.slice(offset, offset + 1024);
+            const byteNumbers = new Array(slice.length);
+            for (let i = 0; i < slice.length; i++) {
+              byteNumbers[i] = slice.charCodeAt(i);
+            }
+            byteArrays.push(new Uint8Array(byteNumbers));
+          }
+          
+          const blob = new Blob(byteArrays, { type: 'image/png' });
+          const filename = `layout-${Date.now()}.png`;
+          
+          console.log('💾 Saving layout image:', filename);
+          
+          // Try File System Access API for desktop browsers
+          if ('showSaveFilePicker' in window) {
+            try {
+              const handle = await (window as any).showSaveFilePicker({
+                suggestedName: filename,
+                types: [{
+                  description: 'Layout Images',
+                  accept: { 'image/png': ['.png'], 'image/jpeg': ['.jpg', '.jpeg'] }
+                }]
+              });
+              
+              const writable = await handle.createWritable();
+              await writable.write(blob);
+              await writable.close();
+              
+              console.log('✅ Layout saved to file system:', handle.name);
+              alert(`✅ Layout saved as image: ${handle.name}!`);
+              return;
+            } catch (e) {
+              if ((e as Error).name === 'AbortError') {
+                console.log('⚠️ User cancelled save');
+                return;
+              }
+              console.log('📱 Falling back to download method');
+            }
+          }
+          
+          // Fallback for mobile and unsupported browsers
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = filename;
+          a.style.display = 'none';
+          document.body.appendChild(a);
+          a.click();
+          
+          // Cleanup
+          setTimeout(() => {
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+          }, 100);
+          
+          console.log('✅ Layout downloaded:', filename);
+          alert(`✅ Layout saved as image to Downloads folder: ${filename}`);
+        } catch (error) {
+          console.error("Error during layout save:", error);
+          alert("Error during save: " + error);
         }
-      }
-      
-      // Fallback for mobile and unsupported browsers
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = filename;
-      a.style.display = 'none';
-      document.body.appendChild(a);
-      a.click();
-      
-      // Cleanup
-      setTimeout(() => {
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-      }, 100);
-      
-      console.log('✅ Layout downloaded:', filename);
-      alert(`✅ Layout saved to Downloads folder: ${filename}`);
+      });
     } catch (e) {
       console.error("❌ Save layout failed:", e);
       alert("Failed to save layout: " + (e as Error).message);
     }
-  }, []);
+  }, [videoReady]);
 
   const handleLoadLayout = useCallback(async () => {
     if (!fabricRef.current) {
@@ -1536,41 +1608,89 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
       const reader = new FileReader();
       reader.onload = (e) => {
         try {
-          const text = e.target?.result as string;
-          const layoutData = JSON.parse(text);
+          const dataUrl = e.target?.result as string;
           
-          console.log('Loading layout:', layoutData.name || file.name);
-          
-          if (!layoutData.canvas) {
-            throw new Error("Invalid layout file: missing canvas data");
+          if (!dataUrl || !dataUrl.startsWith('data:image/')) {
+            throw new Error("Invalid image file");
           }
           
-          fabricRef.current!.clear();
-          fabricRef.current!.loadFromJSON(layoutData.canvas, () => {
-            fabricRef.current!.requestRenderAll();
-            console.log('Layout loaded successfully');
-            alert(`Layout loaded from ${file.name}!`);
-          });
+          console.log('📂 Loading layout background:', file.name);
+          
+          const canvas = fabricRef.current!;
+          
+          // Clear all existing objects first
+          canvas.clear();
+          
+          // Set the image as static background
+          fabric.Image.fromURL(dataUrl, (img) => {
+            if (!img || !img.width || !img.height) {
+              alert('Failed to load layout image.');
+              return;
+            }
+            
+            // Scale image to fit canvas
+            const canvasWidth = canvas.getWidth();
+            const canvasHeight = canvas.getHeight();
+            const imgWidth = img.width || 1;
+            const imgHeight = img.height || 1;
+            
+            const scaleX = canvasWidth / imgWidth;
+            const scaleY = canvasHeight / imgHeight;
+            const scale = Math.min(scaleX, scaleY);
+            
+            img.set({
+              scaleX: scale,
+              scaleY: scale,
+              left: 0,
+              top: 0,
+              selectable: false,   // Cannot be selected
+              evented: false,      // Cannot be interacted with
+              hasControls: false,  // No controls
+              hasBorders: false,   // No borders
+              lockMovementX: true, // Locked position
+              lockMovementY: true,
+              lockRotation: true,
+              lockScalingX: true,
+              lockScalingY: true,
+            });
+            
+            // Add as background (first layer)
+            canvas.add(img);
+            img.sendToBack(); // Ensure it stays at the back
+            
+            // Set canvas background to cover any gaps
+            canvas.backgroundColor = '#000000';
+            
+            canvas.requestRenderAll();
+            
+            console.log('✅ Layout background loaded. You can now add objects on top!');
+            alert(`✅ Layout loaded from ${file.name}!\n\nThe layout is now a static background.\nYou can add, move, and resize objects on top of it.`);
+          }, { crossOrigin: 'anonymous' });
+          
         } catch (err) {
-          console.error("Failed to parse layout:", err);
+          console.error("Failed to load layout:", err);
           alert("Failed to load layout: " + (err as Error).message);
         }
       };
       reader.onerror = () => {
         alert("Failed to read file.");
       };
-      reader.readAsText(file);
+      reader.readAsDataURL(file);
     };
     
     try {
-      console.log('Opening file picker...');
+      console.log('Opening file picker for layout image...');
       
       if ('showOpenFilePicker' in window) {
         try {
           const [handle] = await (window as any).showOpenFilePicker({
             types: [{
-              description: 'Layout Files',
-              accept: { 'application/json': ['.json'] }
+              description: 'Layout Images',
+              accept: { 
+                'image/png': ['.png'],
+                'image/jpeg': ['.jpg', '.jpeg'],
+                'image/jpg': ['.jpg']
+              }
             }],
             multiple: false
           });
@@ -1589,7 +1709,7 @@ const CameraOverlay: React.FC<CameraOverlayProps> = ({ onOpenGallery }) => {
       
       const input = document.createElement('input');
       input.type = 'file';
-      input.accept = '.json,application/json';
+      input.accept = 'image/png,image/jpeg,image/jpg';
       input.style.display = 'none';
       
       input.onchange = (e) => {
